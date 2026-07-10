@@ -255,11 +255,14 @@ class Moderation(commands.Cog):
         channel_id = str(ctx.channel.id)
         # None if never locked via !lock (e.g. state lost to a restart) — falls back
         # to clearing the overwrite entirely, the old (safe) behavior.
-        snapshot = self.locks.pop(channel_id, None)
-        self._save_locks()
+        snapshot = self.locks.get(channel_id)
+        # Only pop/persist once the restore actually succeeds — if it raises, the
+        # snapshot must survive so a retry (or a later !unlock) can still recover it.
         await restore_overwrite(
             ctx.channel, ctx.guild.default_role, snapshot, reason=f"{ctx.author}: {reason}"
         )
+        self.locks.pop(channel_id, None)
+        self._save_locks()
         await ctx.reply(f"🔓 Channel unlocked — {reason}")
 
 
