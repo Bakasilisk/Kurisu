@@ -39,6 +39,10 @@ async def on_message(message):
         response = "*Hör auf mich* ***Kurisutina*** *zu nennen!*"
         await message.reply(response)
 
+    # Check if "horny" is in the message content (case-insensitive)
+    if "horny" in message.content.lower():
+        await message.reply(f"{message.author.mention} ist Horny!")
+
 if __name__ == "__main__":
     if not TOKEN:
         print("Error: DISCORD_TOKEN environment variable is not set.")
