@@ -1,5 +1,8 @@
+import asyncio
 import os
+
 import discord
+from discord.ext import commands
 
 # Simple loader for .env files without requiring external dependencies
 if os.path.exists(".env"):
@@ -20,32 +23,30 @@ TOKEN = os.environ.get("DISCORD_TOKEN")
 intents = discord.Intents.default()
 intents.message_content = True
 
-client = discord.Client(intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-@client.event
+INITIAL_EXTENSIONS = [
+    "cogs.triggers",
+    "cogs.moderation",
+]
+
+
+@bot.event
 async def on_ready():
-    print(f"Logged in as {client.user.name} (ID: {client.user.id})")
+    print(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
     print("------")
 
-@client.event
-async def on_message(message):
-    # Prevent the bot from replying to itself
-    if message.author == client.user:
-        return
 
-    # Check if "kurisutina" is in the message content (case-insensitive)
-    if "kurisutina" in message.content.lower():
-        # Reply with "Hör auf mich Kurisutina zu nennen" in cursive (italics), and "Kurisutina" in bold as well
-        response = "*Hör auf mich* ***Kurisutina*** *zu nennen!*"
-        await message.reply(response)
+async def main():
+    async with bot:
+        for extension in INITIAL_EXTENSIONS:
+            await bot.load_extension(extension)
+        await bot.start(TOKEN)
 
-    # Check if "horny" is in the message content (case-insensitive)
-    if "horny" in message.content.lower():
-        await message.reply(f"{message.author.mention} ist Horny!")
 
 if __name__ == "__main__":
     if not TOKEN:
         print("Error: DISCORD_TOKEN environment variable is not set.")
         print("Please create a .env file containing: DISCORD_TOKEN=your_token_here")
     else:
-        client.run(TOKEN)
+        asyncio.run(main())
