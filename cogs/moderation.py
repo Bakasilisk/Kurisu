@@ -8,6 +8,7 @@ from discord.ext import commands
 from .storage import load_json, save_json_atomic
 
 WARNINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "warnings.json")
+LOCKS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "channel_locks.json")
 
 DURATION_RE = re.compile(r"^(\d+)([smhd])$")
 DURATION_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
@@ -23,16 +24,41 @@ def parse_duration(text: str) -> timedelta:
     return timedelta(**{DURATION_UNITS[unit]: int(amount)})
 
 
+def snapshot_overwrite(channel, target) -> dict | None:
+    """Capture a channel's permission overwrite for a role/member as a JSON-safe dict,
+    or None if no explicit overwrite currently exists for that target."""
+    if target not in channel.overwrites:
+        return None
+    allow, deny = channel.overwrites_for(target).pair()
+    return {"allow": allow.value, "deny": deny.value}
+
+
+async def restore_overwrite(channel, target, snapshot: dict | None, *, reason: str):
+    """Restore a channel's permission overwrite for a role/member to a previously captured
+    snapshot (or clear it entirely if there was none)."""
+    if snapshot is None:
+        await channel.set_permissions(target, overwrite=None, reason=reason)
+    else:
+        overwrite = discord.PermissionOverwrite.from_pair(
+            discord.Permissions(snapshot["allow"]), discord.Permissions(snapshot["deny"])
+        )
+        await channel.set_permissions(target, overwrite=overwrite, reason=reason)
+
+
 class Moderation(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.warnings = self._load_warnings()
+        self.locks = load_json(LOCKS_FILE)
 
     def _load_warnings(self) -> dict:
         return load_json(WARNINGS_FILE)
 
     def _save_warnings(self):
         save_json_atomic(WARNINGS_FILE, self.warnings)
+
+    def _save_locks(self):
+        save_json_atomic(LOCKS_FILE, self.locks)
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MissingPermissions):
@@ -206,6 +232,13 @@ class Moderation(commands.Cog):
     @commands.guild_only()
     async def lock(self, ctx, *, reason: str = "No reason provided"):
         """Prevent @everyone from sending messages in the current channel."""
+        channel_id = str(ctx.channel.id)
+        if channel_id not in self.locks:
+            # Only capture on the first lock, so a second !lock on an already-locked
+            # channel doesn't clobber the true pre-lock snapshot.
+            self.locks[channel_id] = snapshot_overwrite(ctx.channel, ctx.guild.default_role)
+            self._save_locks()
+
         overwrite = ctx.channel.overwrites_for(ctx.guild.default_role)
         overwrite.send_messages = False
         await ctx.channel.set_permissions(
@@ -219,10 +252,13 @@ class Moderation(commands.Cog):
     @commands.guild_only()
     async def unlock(self, ctx, *, reason: str = "No reason provided"):
         """Allow @everyone to send messages in the current channel again."""
-        overwrite = ctx.channel.overwrites_for(ctx.guild.default_role)
-        overwrite.send_messages = None
-        await ctx.channel.set_permissions(
-            ctx.guild.default_role, overwrite=overwrite, reason=f"{ctx.author}: {reason}"
+        channel_id = str(ctx.channel.id)
+        # None if never locked via !lock (e.g. state lost to a restart) — falls back
+        # to clearing the overwrite entirely, the old (safe) behavior.
+        snapshot = self.locks.pop(channel_id, None)
+        self._save_locks()
+        await restore_overwrite(
+            ctx.channel, ctx.guild.default_role, snapshot, reason=f"{ctx.author}: {reason}"
         )
         await ctx.reply(f"🔓 Channel unlocked — {reason}")
 

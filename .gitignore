@@ -8,6 +8,7 @@ ENV/
 
 # Moderation data
 warnings.json
+channel_locks.json
 
 # Leveling data
 xp.json
