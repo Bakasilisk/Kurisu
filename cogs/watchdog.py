@@ -186,6 +186,13 @@ class Watchdog(commands.Cog):
         # cancelled on cog_unload (see cog_unload docstring) — they close over
         # `self` and keep working correctly across a bare extension reload.
         self._lockdown_tasks: dict[int, asyncio.Task] = {}
+        # Serializes _start_lockdown/_lift_lockdown per guild. Needed because
+        # _start_lockdown has a real await gap (asyncio.gather over all channels)
+        # between its "already active?" check and setting active=True — two
+        # concurrent triggers could otherwise both pass the check and each
+        # snapshot the other's in-progress changes as if they were the original
+        # pre-lockdown state, corrupting the restore-on-lift guarantee.
+        self._lockdown_locks: dict[int, asyncio.Lock] = {}
         self._prune_activity.start()
         # One-shot: resume any lockdown that was still active when the bot last
         # stopped, rather than leaving it silently permanent or silently lifted.
@@ -405,61 +412,85 @@ class Watchdog(commands.Cog):
         """Deny @everyone send_messages in every text channel, with an explicit
         allow carve-out for any configured protected role(s), snapshotting each
         channel's prior state first so it can be restored exactly on lift."""
-        guild_conf = self._guild_conf(guild.id)
-        lockdown = guild_conf["lockdown"]
-        if lockdown["active"]:
-            return  # already locked; don't re-snapshot an already-modified state
+        lock = self._lockdown_locks.setdefault(guild.id, asyncio.Lock())
+        async with lock:
+            guild_conf = self._guild_conf(guild.id)
+            lockdown = guild_conf["lockdown"]
+            if lockdown["active"]:
+                return  # already locked; don't re-snapshot an already-modified state
 
-        protected_roles = [guild.get_role(rid) for rid in guild_conf["protected_role_ids"]]
-        protected_roles = [r for r in protected_roles if r is not None]
+            protected_roles = [guild.get_role(rid) for rid in guild_conf["protected_role_ids"]]
+            protected_roles = [r for r in protected_roles if r is not None]
 
-        channel_overwrites: dict[str, dict | None] = {}
-        protected_role_overwrites: dict[str, dict[str, dict | None]] = {
-            str(role.id): {} for role in protected_roles
-        }
-        semaphore = asyncio.Semaphore(5)  # bound concurrent edits against rate limits
+            channel_overwrites: dict[str, dict | None] = {}
+            protected_role_overwrites: dict[str, dict[str, dict | None]] = {
+                str(role.id): {} for role in protected_roles
+            }
+            semaphore = asyncio.Semaphore(5)  # bound concurrent edits against rate limits
 
-        async def lock_one(channel):
-            async with semaphore:
-                channel_overwrites[str(channel.id)] = snapshot_overwrite(
-                    channel, guild.default_role
-                )
-                overwrite = channel.overwrites_for(guild.default_role)
-                overwrite.send_messages = False
-                await channel.set_permissions(
-                    guild.default_role, overwrite=overwrite,
-                    reason=f"Watchdog lockdown: {reason}",
-                )
-                for role in protected_roles:
-                    protected_role_overwrites[str(role.id)][str(channel.id)] = (
-                        snapshot_overwrite(channel, role)
+            async def lock_one(channel):
+                async with semaphore:
+                    channel_overwrites[str(channel.id)] = snapshot_overwrite(
+                        channel, guild.default_role
                     )
-                    allow_overwrite = channel.overwrites_for(role)
-                    allow_overwrite.send_messages = True
+                    overwrite = channel.overwrites_for(guild.default_role)
+                    overwrite.send_messages = False
                     await channel.set_permissions(
-                        role, overwrite=allow_overwrite,
+                        guild.default_role, overwrite=overwrite,
                         reason=f"Watchdog lockdown: {reason}",
                     )
+                    for role in protected_roles:
+                        protected_role_overwrites[str(role.id)][str(channel.id)] = (
+                            snapshot_overwrite(channel, role)
+                        )
+                        allow_overwrite = channel.overwrites_for(role)
+                        allow_overwrite.send_messages = True
+                        await channel.set_permissions(
+                            role, overwrite=allow_overwrite,
+                            reason=f"Watchdog lockdown: {reason}",
+                        )
 
-        await asyncio.gather(*(lock_one(channel) for channel in guild.text_channels))
-
-        now_epoch = time.time()
-        lockdown["active"] = True
-        lockdown["started_at"] = now_epoch
-        lockdown["expires_at"] = now_epoch + LOCKDOWN_MAX_DURATION_SECONDS
-        lockdown["channel_overwrites"] = channel_overwrites
-        lockdown["protected_role_overwrites"] = protected_role_overwrites
-        self._save_config()
-
-        # A repeat trigger within the last hour means this is an ongoing raid,
-        # not a one-off — stay locked until a mod manually lifts it instead of
-        # auto-lifting into what might still be an active attack.
-        stay_locked = len(lockdown["trigger_timestamps"]) > 1
-        if not stay_locked:
-            self._lockdown_tasks[guild.id] = asyncio.ensure_future(
-                self._auto_lift_after(guild.id, LOCKDOWN_MAX_DURATION_SECONDS)
+            # return_exceptions=True is essential here: with the default False,
+            # one channel raising would propagate immediately, aborting before
+            # anything below is persisted — so channels that HAD already been
+            # successfully locked would be stuck with zero record to restore
+            # them, and the other still-running lock_one() calls would keep
+            # mutating real Discord state in the background, unretrieved.
+            results = await asyncio.gather(
+                *(lock_one(channel) for channel in guild.text_channels),
+                return_exceptions=True,
             )
-        await self._send_lockdown_alert(guild, reason, stay_locked)
+            failures = [
+                (channel, result)
+                for channel, result in zip(guild.text_channels, results)
+                if isinstance(result, BaseException)
+            ]
+            if failures:
+                logger.warning(
+                    "Watchdog: failed to lock %d/%d channel(s) in guild %s: %s",
+                    len(failures), len(guild.text_channels), guild.id,
+                    ", ".join(f"{c.id} ({e})" for c, e in failures),
+                )
+
+            # Always persist whatever succeeded, even if some channels failed —
+            # a partially-applied lockdown must still be fully restorable.
+            now_epoch = time.time()
+            lockdown["active"] = True
+            lockdown["started_at"] = now_epoch
+            lockdown["expires_at"] = now_epoch + LOCKDOWN_MAX_DURATION_SECONDS
+            lockdown["channel_overwrites"] = channel_overwrites
+            lockdown["protected_role_overwrites"] = protected_role_overwrites
+            self._save_config()
+
+            # A repeat trigger within the last hour means this is an ongoing raid,
+            # not a one-off — stay locked until a mod manually lifts it instead of
+            # auto-lifting into what might still be an active attack.
+            stay_locked = len(lockdown["trigger_timestamps"]) > 1
+            if not stay_locked:
+                self._lockdown_tasks[guild.id] = asyncio.ensure_future(
+                    self._auto_lift_after(guild.id, LOCKDOWN_MAX_DURATION_SECONDS)
+                )
+            await self._send_lockdown_alert(guild, reason, stay_locked, failed_count=len(failures))
 
     async def _auto_lift_after(self, guild_id: int, delay: float):
         await asyncio.sleep(delay)
@@ -468,38 +499,40 @@ class Watchdog(commands.Cog):
             await self._lift_lockdown(guild, manual=False)
 
     async def _lift_lockdown(self, guild: discord.Guild, *, manual: bool, actor=None):
-        guild_conf = self._guild_conf(guild.id)
-        lockdown = guild_conf["lockdown"]
-        if not lockdown["active"]:
-            return
+        lock = self._lockdown_locks.setdefault(guild.id, asyncio.Lock())
+        async with lock:
+            guild_conf = self._guild_conf(guild.id)
+            lockdown = guild_conf["lockdown"]
+            if not lockdown["active"]:
+                return
 
-        for channel_id_str, snapshot in lockdown["channel_overwrites"].items():
-            channel = guild.get_channel(int(channel_id_str))
-            if channel is not None:
-                await restore_overwrite(
-                    channel, guild.default_role, snapshot, reason="Watchdog: lockdown lifted"
-                )
-        for role_id_str, per_channel in lockdown["protected_role_overwrites"].items():
-            role = guild.get_role(int(role_id_str))
-            if role is None:
-                continue
-            for channel_id_str, snapshot in per_channel.items():
+            for channel_id_str, snapshot in lockdown["channel_overwrites"].items():
                 channel = guild.get_channel(int(channel_id_str))
                 if channel is not None:
                     await restore_overwrite(
-                        channel, role, snapshot, reason="Watchdog: lockdown lifted"
+                        channel, guild.default_role, snapshot, reason="Watchdog: lockdown lifted"
                     )
+            for role_id_str, per_channel in lockdown["protected_role_overwrites"].items():
+                role = guild.get_role(int(role_id_str))
+                if role is None:
+                    continue
+                for channel_id_str, snapshot in per_channel.items():
+                    channel = guild.get_channel(int(channel_id_str))
+                    if channel is not None:
+                        await restore_overwrite(
+                            channel, role, snapshot, reason="Watchdog: lockdown lifted"
+                        )
 
-        lockdown["active"] = False
-        lockdown["started_at"] = None
-        lockdown["expires_at"] = None
-        lockdown["channel_overwrites"] = {}
-        lockdown["protected_role_overwrites"] = {}
-        self._save_config()
-        self._lockdown_tasks.pop(guild.id, None)
-        await self._send_lockdown_lifted_alert(guild, manual=manual, actor=actor)
+            lockdown["active"] = False
+            lockdown["started_at"] = None
+            lockdown["expires_at"] = None
+            lockdown["channel_overwrites"] = {}
+            lockdown["protected_role_overwrites"] = {}
+            self._save_config()
+            self._lockdown_tasks.pop(guild.id, None)
+            await self._send_lockdown_lifted_alert(guild, manual=manual, actor=actor)
 
-    async def _send_lockdown_alert(self, guild, reason, stay_locked):
+    async def _send_lockdown_alert(self, guild, reason, stay_locked, *, failed_count=0):
         guild_conf = self._guild_conf(guild.id)
         log_channel_id = guild_conf["log_channel_id"]
         log_channel = guild.get_channel(log_channel_id) if log_channel_id else None
@@ -515,6 +548,11 @@ class Watchdog(commands.Cog):
         else:
             minutes = LOCKDOWN_MAX_DURATION_SECONDS // 60
             description += f"\n\nAuto-lifts in {minutes} minutes, or use `!watchdog unlock`."
+        if failed_count:
+            description += (
+                f"\n\n⚠️ Failed to lock {failed_count} channel(s) — check the bot's "
+                f"permissions there. Everything that DID lock is fully restorable."
+            )
 
         embed = discord.Embed(
             title="🔒 Watchdog Lockdown Started", description=description,
