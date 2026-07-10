@@ -51,7 +51,14 @@ async def main():
                 await bot.load_extension(extension)
             except commands.ExtensionError:
                 logger.exception("Failed to load extension %s", extension)
-        await bot.start(TOKEN)
+        try:
+            await bot.start(TOKEN)
+        except discord.PrivilegedIntentsRequired:
+            logger.exception(
+                "A privileged intent (e.g. Server Members or Message Content) is enabled in "
+                "code but not in the Developer Portal. Enable it under Privileged Gateway "
+                "Intents for this application, then restart the bot."
+            )
 
 
 if __name__ == "__main__":
