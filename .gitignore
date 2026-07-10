@@ -14,6 +14,9 @@ mod_log.json
 # Leveling data
 xp.json
 
+# Watchdog data
+watchdog.json
+
 # Python Cache
 __pycache__/
 *.pyc

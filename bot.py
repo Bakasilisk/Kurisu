@@ -25,6 +25,9 @@ TOKEN = os.environ.get("DISCORD_TOKEN")
 # Setup bot intents
 intents = discord.Intents.default()
 intents.message_content = True
+# Privileged intent, required for accurate Role.members counts (watchdog's high-value-role
+# detection) — must also be enabled under Privileged Gateway Intents in the Developer Portal.
+intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -32,6 +35,7 @@ INITIAL_EXTENSIONS = [
     "cogs.triggers",
     "cogs.moderation",
     "cogs.leveling",
+    "cogs.watchdog",
 ]
 
 
