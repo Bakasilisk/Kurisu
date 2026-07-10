@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import os
@@ -11,6 +12,7 @@ from typing import NamedTuple
 import discord
 from discord.ext import commands, tasks
 
+from .moderation import restore_overwrite, snapshot_overwrite
 from .storage import load_json, save_json_atomic
 
 logger = logging.getLogger(__name__)
@@ -59,6 +61,8 @@ LOCKDOWN_REPEAT_WINDOW_SECONDS = 60 * 60
 # How long a member stays "already actioned" before a continuing burst is
 # allowed to re-trigger a response (re-alert, retry a failed timeout, etc.).
 ACTION_REARM_SECONDS = 5 * 60
+
+LOCKDOWN_MAX_DURATION_SECONDS = 15 * 60
 
 
 class MessageEvent(NamedTuple):
@@ -170,27 +174,44 @@ class Watchdog(commands.Cog):
         self.config = load_json(WATCHDOG_FILE)
         self._member_activity: dict[tuple[int, int], deque] = {}
         self._high_value_role_cache: dict[int, tuple[float, set[int]]] = {}
-        # Members already actioned for their current burst, so a single episode
-        # doesn't re-trigger a timeout/delete/alert on every subsequent message.
-        # Cleared once their activity is fully pruned (episode over) or they leave.
         # Last time each member was actioned (monotonic time), so a single ongoing
-        # burst doesn't re-trigger a timeout/delete/alert on every message, but a
+        # burst doesn't re-trigger a timeout/delete/alert on every message, but an
         # ongoing raid still periodically re-alerts/retries rather than going
         # silent forever after the first hit (e.g. in shadow mode, or if the
         # timeout attempt failed and the member keeps posting).
         self._actioned_members: dict[tuple[int, int], float] = {}
         self._content_hash_activity: dict[tuple[int, str], deque] = {}
         self._pattern_a_trips: dict[int, deque] = {}
+        # Pending auto-lift tasks for active lockdowns, keyed by guild ID. Not
+        # cancelled on cog_unload (see cog_unload docstring) — they close over
+        # `self` and keep working correctly across a bare extension reload.
+        self._lockdown_tasks: dict[int, asyncio.Task] = {}
         self._prune_activity.start()
+        # One-shot: resume any lockdown that was still active when the bot last
+        # stopped, rather than leaving it silently permanent or silently lifted.
+        self._rehydrate_task = asyncio.ensure_future(self._rehydrate_lockdowns())
 
     def cog_unload(self):
         self._prune_activity.cancel()
+        # Deliberately NOT cancelling self._lockdown_tasks here: an in-flight
+        # auto-lift only restores channel permissions and doesn't depend on this
+        # cog instance's lifecycle, so letting it run to completion is safer than
+        # abandoning an active lockdown on a bare `!reload watchdog`.
 
     def _save_config(self):
         save_json_atomic(WATCHDOG_FILE, self.config)
 
     def _guild_conf(self, guild_id: int) -> dict:
-        return self.config.setdefault(str(guild_id), _default_guild_config())
+        guild_conf = self.config.setdefault(str(guild_id), _default_guild_config())
+        # Backfill any keys missing from a config persisted by an earlier schema
+        # (e.g. a guild's config saved before "lockdown" or some other field
+        # existed), so accessing a newer key never raises a bare KeyError.
+        defaults = _default_guild_config()
+        for key, value in defaults.items():
+            guild_conf.setdefault(key, value)
+        for key, value in defaults["lockdown"].items():
+            guild_conf["lockdown"].setdefault(key, value)
+        return guild_conf
 
     def _high_value_role_ids(self, guild: discord.Guild) -> set[int]:
         now = time.monotonic()
@@ -358,15 +379,172 @@ class Watchdog(commands.Cog):
 
         await self._start_lockdown(guild, reason)
 
-    async def _start_lockdown(self, guild, reason: str):
-        """Stub: real permission-changing lockdown mechanism lands in a later
-        step. For now this just records that a lockdown would have started."""
+    async def _rehydrate_lockdowns(self):
+        """Resume any lockdown that was still active when the bot last stopped,
+        so a restart mid-raid doesn't silently make it permanent (data says
+        active but nothing is scheduled to lift it) or silently lift it early."""
+        await self.bot.wait_until_ready()
+        now_epoch = time.time()
+        for guild_id_str, guild_conf in list(self.config.items()):
+            lockdown = guild_conf.get("lockdown", {})
+            if not lockdown.get("active"):
+                continue
+            guild = self.bot.get_guild(int(guild_id_str))
+            if guild is None:
+                continue
+            expires_at = lockdown.get("expires_at")
+            remaining = (expires_at - now_epoch) if expires_at else 0
+            if remaining <= 0:
+                await self._lift_lockdown(guild, manual=False)
+            else:
+                self._lockdown_tasks[guild.id] = asyncio.ensure_future(
+                    self._auto_lift_after(guild.id, remaining)
+                )
+
+    async def _start_lockdown(self, guild: discord.Guild, reason: str):
+        """Deny @everyone send_messages in every text channel, with an explicit
+        allow carve-out for any configured protected role(s), snapshotting each
+        channel's prior state first so it can be restored exactly on lift."""
         guild_conf = self._guild_conf(guild.id)
-        if guild_conf["lockdown"]["active"]:
-            return
-        logger.info("Watchdog: would start a lockdown in guild %s (%s)", guild.id, reason)
-        guild_conf["lockdown"]["active"] = True
+        lockdown = guild_conf["lockdown"]
+        if lockdown["active"]:
+            return  # already locked; don't re-snapshot an already-modified state
+
+        protected_roles = [guild.get_role(rid) for rid in guild_conf["protected_role_ids"]]
+        protected_roles = [r for r in protected_roles if r is not None]
+
+        channel_overwrites: dict[str, dict | None] = {}
+        protected_role_overwrites: dict[str, dict[str, dict | None]] = {
+            str(role.id): {} for role in protected_roles
+        }
+        semaphore = asyncio.Semaphore(5)  # bound concurrent edits against rate limits
+
+        async def lock_one(channel):
+            async with semaphore:
+                channel_overwrites[str(channel.id)] = snapshot_overwrite(
+                    channel, guild.default_role
+                )
+                overwrite = channel.overwrites_for(guild.default_role)
+                overwrite.send_messages = False
+                await channel.set_permissions(
+                    guild.default_role, overwrite=overwrite,
+                    reason=f"Watchdog lockdown: {reason}",
+                )
+                for role in protected_roles:
+                    protected_role_overwrites[str(role.id)][str(channel.id)] = (
+                        snapshot_overwrite(channel, role)
+                    )
+                    allow_overwrite = channel.overwrites_for(role)
+                    allow_overwrite.send_messages = True
+                    await channel.set_permissions(
+                        role, overwrite=allow_overwrite,
+                        reason=f"Watchdog lockdown: {reason}",
+                    )
+
+        await asyncio.gather(*(lock_one(channel) for channel in guild.text_channels))
+
+        now_epoch = time.time()
+        lockdown["active"] = True
+        lockdown["started_at"] = now_epoch
+        lockdown["expires_at"] = now_epoch + LOCKDOWN_MAX_DURATION_SECONDS
+        lockdown["channel_overwrites"] = channel_overwrites
+        lockdown["protected_role_overwrites"] = protected_role_overwrites
         self._save_config()
+
+        # A repeat trigger within the last hour means this is an ongoing raid,
+        # not a one-off — stay locked until a mod manually lifts it instead of
+        # auto-lifting into what might still be an active attack.
+        stay_locked = len(lockdown["trigger_timestamps"]) > 1
+        if not stay_locked:
+            self._lockdown_tasks[guild.id] = asyncio.ensure_future(
+                self._auto_lift_after(guild.id, LOCKDOWN_MAX_DURATION_SECONDS)
+            )
+        await self._send_lockdown_alert(guild, reason, stay_locked)
+
+    async def _auto_lift_after(self, guild_id: int, delay: float):
+        await asyncio.sleep(delay)
+        guild = self.bot.get_guild(guild_id)
+        if guild is not None:
+            await self._lift_lockdown(guild, manual=False)
+
+    async def _lift_lockdown(self, guild: discord.Guild, *, manual: bool, actor=None):
+        guild_conf = self._guild_conf(guild.id)
+        lockdown = guild_conf["lockdown"]
+        if not lockdown["active"]:
+            return
+
+        for channel_id_str, snapshot in lockdown["channel_overwrites"].items():
+            channel = guild.get_channel(int(channel_id_str))
+            if channel is not None:
+                await restore_overwrite(
+                    channel, guild.default_role, snapshot, reason="Watchdog: lockdown lifted"
+                )
+        for role_id_str, per_channel in lockdown["protected_role_overwrites"].items():
+            role = guild.get_role(int(role_id_str))
+            if role is None:
+                continue
+            for channel_id_str, snapshot in per_channel.items():
+                channel = guild.get_channel(int(channel_id_str))
+                if channel is not None:
+                    await restore_overwrite(
+                        channel, role, snapshot, reason="Watchdog: lockdown lifted"
+                    )
+
+        lockdown["active"] = False
+        lockdown["started_at"] = None
+        lockdown["expires_at"] = None
+        lockdown["channel_overwrites"] = {}
+        lockdown["protected_role_overwrites"] = {}
+        self._save_config()
+        self._lockdown_tasks.pop(guild.id, None)
+        await self._send_lockdown_lifted_alert(guild, manual=manual, actor=actor)
+
+    async def _send_lockdown_alert(self, guild, reason, stay_locked):
+        guild_conf = self._guild_conf(guild.id)
+        log_channel_id = guild_conf["log_channel_id"]
+        log_channel = guild.get_channel(log_channel_id) if log_channel_id else None
+        if log_channel is None:
+            return
+
+        description = reason
+        if stay_locked:
+            description += (
+                "\n\n⚠️ This is a repeat trigger within the last hour — staying locked "
+                "until manually lifted with `!watchdog unlock`."
+            )
+        else:
+            minutes = LOCKDOWN_MAX_DURATION_SECONDS // 60
+            description += f"\n\nAuto-lifts in {minutes} minutes, or use `!watchdog unlock`."
+
+        embed = discord.Embed(
+            title="🔒 Watchdog Lockdown Started", description=description,
+            color=discord.Color.dark_red(), timestamp=discord.utils.utcnow(),
+        )
+        try:
+            await log_channel.send(embed=embed)
+        except discord.Forbidden:
+            pass
+
+    async def _send_lockdown_lifted_alert(self, guild, *, manual, actor=None):
+        guild_conf = self._guild_conf(guild.id)
+        log_channel_id = guild_conf["log_channel_id"]
+        log_channel = guild.get_channel(log_channel_id) if log_channel_id else None
+        if log_channel is None:
+            return
+
+        description = (
+            f"Manually lifted by {actor.mention if actor else 'a moderator'}."
+            if manual
+            else "Auto-lifted after the lockdown duration elapsed."
+        )
+        embed = discord.Embed(
+            title="🔓 Watchdog Lockdown Lifted", description=description,
+            color=discord.Color.green(), timestamp=discord.utils.utcnow(),
+        )
+        try:
+            await log_channel.send(embed=embed)
+        except discord.Forbidden:
+            pass
 
     async def _respond_to_member(self, guild, member, events, reason, *, role_pinged):
         """Timeout, then delete, then alert — in that order, so the burst is
@@ -672,8 +850,11 @@ class Watchdog(commands.Cog):
         if not guild_conf["lockdown"]["active"]:
             await ctx.reply("There is no active watchdog lockdown.")
             return
-        # Real lockdown-lifting logic lands once the lockdown mechanism itself does.
-        await ctx.reply("Lockdown lifting isn't implemented yet.")
+        task = self._lockdown_tasks.pop(ctx.guild.id, None)
+        if task is not None:
+            task.cancel()
+        await self._lift_lockdown(ctx.guild, manual=True, actor=ctx.author)
+        await ctx.reply("🔓 Lockdown manually lifted.")
 
 
 async def setup(bot):
