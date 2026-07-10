@@ -456,19 +456,25 @@ class Watchdog(commands.Cog):
             # successfully locked would be stuck with zero record to restore
             # them, and the other still-running lock_one() calls would keep
             # mutating real Discord state in the background, unretrieved.
+            # Evaluated once and reused below: Guild.text_channels rebuilds its
+            # list fresh on every access (not cached), and channels could be
+            # created/deleted/reordered during the gather below — re-evaluating
+            # it after the fact could misalign results with the wrong channel.
+            channels = list(guild.text_channels)
+
             results = await asyncio.gather(
-                *(lock_one(channel) for channel in guild.text_channels),
+                *(lock_one(channel) for channel in channels),
                 return_exceptions=True,
             )
             failures = [
                 (channel, result)
-                for channel, result in zip(guild.text_channels, results)
+                for channel, result in zip(channels, results)
                 if isinstance(result, BaseException)
             ]
             if failures:
                 logger.warning(
                     "Watchdog: failed to lock %d/%d channel(s) in guild %s: %s",
-                    len(failures), len(guild.text_channels), guild.id,
+                    len(failures), len(channels), guild.id,
                     ", ".join(f"{c.id} ({e})" for c, e in failures),
                 )
 
