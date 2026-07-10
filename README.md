@@ -13,7 +13,9 @@ A simple, lightweight Discord bot written in Python using `discord.py`.
 Each requires the relevant Discord permission (e.g. `Kick Members`, `Ban Members`,
 `Moderate Members`, `Manage Messages`, `Manage Channels`) on both the caller and the bot,
 and enforces role-hierarchy checks so members can't act on others with an equal or higher role.
-Warnings are persisted to `warnings.json` in the project root.
+`lock`/`unlock` snapshot each channel's exact pre-lock permission state (persisted to
+`channel_locks.json`) so unlocking always restores what was there before, rather than
+blindly resetting it. Warnings are persisted to `warnings.json` in the project root.
 
 **Leveling** — members earn 15-25 XP per message (60s cooldown to prevent spam farming),
 with an announcement on level-up. Commands: `rank`/`level [member]` to view level/XP/server
