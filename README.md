@@ -31,8 +31,13 @@ A simple, lightweight Discord bot written in Python using `discord.py`.
    - Copy the generated URL and open it in your browser to invite the bot to your server.
 
 4. **Run the Bot:**
-   - Activate the virtual environment and run the bot script:
+   - Set up and activate the virtual environment:
      ```bash
-     source .env/bin/activate
+     python3 -m venv .venv
+     source .venv/bin/activate
+     pip install -r requirements.txt
+     ```
+   - Run the bot script:
+     ```bash
      python bot.py
      ```
