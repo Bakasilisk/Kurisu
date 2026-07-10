@@ -42,6 +42,24 @@ PRUNE_INTERVAL_SECONDS = 60
 
 WATCHDOG_TIMEOUT_DURATION_SECONDS = 60 * 60  # 1h; mods can adjust via the existing !timeout/!untimeout
 
+# Guild-wide duplicate-content wave: catches coordinated raids that spread load
+# thin across many accounts, each individually staying under Pattern A/B.
+DUP_CONTENT_MIN_ACCOUNTS = 3
+DUP_CONTENT_WINDOW_SECONDS = 60
+
+# Raid wave: multiple accounts independently tripping Pattern A close together
+# is treated as a coordinated attack, not isolated incidents.
+RAID_WAVE_MIN_ACCOUNTS = 2
+RAID_WAVE_WINDOW_SECONDS = 60
+
+# A repeat wave trigger within this window (of a prior one) signals an ongoing
+# raid rather than a one-off, consumed by the lockdown mechanism (later step).
+LOCKDOWN_REPEAT_WINDOW_SECONDS = 60 * 60
+
+# How long a member stays "already actioned" before a continuing burst is
+# allowed to re-trigger a response (re-alert, retry a failed timeout, etc.).
+ACTION_REARM_SECONDS = 5 * 60
+
 
 class MessageEvent(NamedTuple):
     timestamp: float
@@ -49,6 +67,17 @@ class MessageEvent(NamedTuple):
     content_hash: str | None
     mentions_high_value_role: bool
     message: discord.Message
+
+
+class HashEvent(NamedTuple):
+    timestamp: float
+    author_id: int
+    message: discord.Message
+
+
+class PatternATrip(NamedTuple):
+    timestamp: float
+    member_id: int
 
 
 def _content_hash(message: discord.Message) -> str | None:
@@ -144,7 +173,14 @@ class Watchdog(commands.Cog):
         # Members already actioned for their current burst, so a single episode
         # doesn't re-trigger a timeout/delete/alert on every subsequent message.
         # Cleared once their activity is fully pruned (episode over) or they leave.
-        self._actioned_members: set[tuple[int, int]] = set()
+        # Last time each member was actioned (monotonic time), so a single ongoing
+        # burst doesn't re-trigger a timeout/delete/alert on every message, but a
+        # ongoing raid still periodically re-alerts/retries rather than going
+        # silent forever after the first hit (e.g. in shadow mode, or if the
+        # timeout attempt failed and the member keeps posting).
+        self._actioned_members: dict[tuple[int, int], float] = {}
+        self._content_hash_activity: dict[tuple[int, str], deque] = {}
+        self._pattern_a_trips: dict[int, deque] = {}
         self._prune_activity.start()
 
     def cog_unload(self):
@@ -205,19 +241,51 @@ class Watchdog(commands.Cog):
         events.append(event)
         _prune_deque(events, MEMBER_ACTIVITY_MAX_AGE_SECONDS, now)
 
-        if key in self._actioned_members:
-            return  # already handled this ongoing burst; don't re-trigger every message
+        # Guild-wide duplicate-content tracking runs regardless of this member's
+        # own actioned status — it exists specifically to catch coordinated raids
+        # that spread load thin across many accounts, each staying under their
+        # own individual Pattern A/B threshold.
+        if event.content_hash is not None:
+            hash_key = (message.guild.id, event.content_hash)
+            hash_events = self._content_hash_activity.setdefault(hash_key, deque())
+            hash_events.append(HashEvent(timestamp=now, author_id=message.author.id, message=message))
+            _prune_deque(hash_events, DUP_CONTENT_WINDOW_SECONDS, now)
+            distinct_authors = {e.author_id for e in hash_events}
+            if len(distinct_authors) >= DUP_CONTENT_MIN_ACCOUNTS:
+                events_by_author = {
+                    author_id: [e for e in hash_events if e.author_id == author_id]
+                    for author_id in distinct_authors
+                }
+                await self._trigger_raid_wave(
+                    message.guild, distinct_authors,
+                    reason="Duplicate content posted by multiple accounts",
+                    events_by_author=events_by_author,
+                )
+
+        last_actioned = self._actioned_members.get(key)
+        if last_actioned is not None and now - last_actioned < ACTION_REARM_SECONDS:
+            return  # already handled recently; don't re-trigger on every message
 
         if _check_pattern_a(events, now):
             window = _pattern_a_window(events, now)
-            self._actioned_members.add(key)
+            self._actioned_members[key] = now
             await self._respond_to_member(
                 message.guild, message.author, window,
                 reason="Pattern A: burst across multiple channels with a high-value role mention",
                 role_pinged=_describe_role_pinged(window),
             )
+
+            trips = self._pattern_a_trips.setdefault(message.guild.id, deque())
+            trips.append(PatternATrip(timestamp=now, member_id=message.author.id))
+            _prune_deque(trips, RAID_WAVE_WINDOW_SECONDS, now)
+            distinct_trippers = {t.member_id for t in trips}
+            if len(distinct_trippers) >= RAID_WAVE_MIN_ACCOUNTS:
+                await self._trigger_raid_wave(
+                    message.guild, distinct_trippers,
+                    reason="Multiple accounts tripped Pattern A", events_by_author=None,
+                )
         elif _check_pattern_b(events, now):
-            self._actioned_members.add(key)
+            self._actioned_members[key] = now
             await self._respond_to_member(
                 message.guild, message.author, list(events),
                 reason="Pattern B: message flooding",
@@ -228,7 +296,7 @@ class Watchdog(commands.Cog):
     async def on_member_remove(self, member: discord.Member) -> None:
         key = (member.guild.id, member.id)
         self._member_activity.pop(key, None)
-        self._actioned_members.discard(key)
+        self._actioned_members.pop(key, None)
 
     @tasks.loop(seconds=PRUNE_INTERVAL_SECONDS)
     async def _prune_activity(self):
@@ -240,7 +308,65 @@ class Watchdog(commands.Cog):
                 stale_keys.append(key)
         for key in stale_keys:
             del self._member_activity[key]
-            self._actioned_members.discard(key)
+            self._actioned_members.pop(key, None)
+
+        stale_hash_keys = []
+        for hash_key, hash_events in self._content_hash_activity.items():
+            _prune_deque(hash_events, DUP_CONTENT_WINDOW_SECONDS, now)
+            if not hash_events:
+                stale_hash_keys.append(hash_key)
+        for hash_key in stale_hash_keys:
+            del self._content_hash_activity[hash_key]
+
+        stale_guild_ids = []
+        for guild_id, trips in self._pattern_a_trips.items():
+            _prune_deque(trips, RAID_WAVE_WINDOW_SECONDS, now)
+            if not trips:
+                stale_guild_ids.append(guild_id)
+        for guild_id in stale_guild_ids:
+            del self._pattern_a_trips[guild_id]
+
+    async def _trigger_raid_wave(self, guild, involved_member_ids, reason, *, events_by_author):
+        """Common entry point for both wave triggers (repeated Pattern A trips,
+        and the duplicate-content check). Responds to any involved member not
+        already actioned, then escalates to a (stubbed) lockdown."""
+        now = time.monotonic()
+        for member_id in involved_member_ids:
+            key = (guild.id, member_id)
+            last_actioned = self._actioned_members.get(key)
+            if last_actioned is not None and now - last_actioned < ACTION_REARM_SECONDS:
+                continue
+            member = guild.get_member(member_id)
+            if member is None:
+                continue
+            events = (events_by_author or {}).get(member_id) or list(
+                self._member_activity.get(key, ())
+            )
+            if not events:
+                continue
+            self._actioned_members[key] = now
+            await self._respond_to_member(guild, member, events, reason=reason, role_pinged=None)
+
+        guild_conf = self._guild_conf(guild.id)
+        lockdown = guild_conf["lockdown"]
+        now_epoch = time.time()
+        lockdown["trigger_timestamps"].append(now_epoch)
+        lockdown["trigger_timestamps"] = [
+            t for t in lockdown["trigger_timestamps"] if now_epoch - t <= LOCKDOWN_REPEAT_WINDOW_SECONDS
+        ]
+        self._save_config()
+
+        await self._start_lockdown(guild, reason)
+
+    async def _start_lockdown(self, guild, reason: str):
+        """Stub: real permission-changing lockdown mechanism lands in a later
+        step. For now this just records that a lockdown would have started."""
+        guild_conf = self._guild_conf(guild.id)
+        if guild_conf["lockdown"]["active"]:
+            return
+        logger.info("Watchdog: would start a lockdown in guild %s (%s)", guild.id, reason)
+        guild_conf["lockdown"]["active"] = True
+        self._save_config()
 
     async def _respond_to_member(self, guild, member, events, reason, *, role_pinged):
         """Timeout, then delete, then alert — in that order, so the burst is
@@ -291,7 +417,9 @@ class Watchdog(commands.Cog):
             title = "🐕 Watchdog Action Taken"
             color = discord.Color.orange()
 
-        channels_touched = ", ".join(f"<#{cid}>" for cid in sorted({e.channel_id for e in events}))
+        channels_touched = ", ".join(
+            f"<#{cid}>" for cid in sorted({e.message.channel.id for e in events})
+        )
 
         embed = discord.Embed(title=title, color=color, timestamp=discord.utils.utcnow())
         embed.add_field(name="Member", value=f"{member.mention} ({member})", inline=False)
