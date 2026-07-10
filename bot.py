@@ -51,7 +51,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    discord.utils.setup_logging()
+    discord.utils.setup_logging(root=True)
     if not TOKEN:
         logger.error("DISCORD_TOKEN environment variable is not set.")
         logger.error("Please create a .env file containing: DISCORD_TOKEN=your_token_here")
