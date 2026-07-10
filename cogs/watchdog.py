@@ -5,6 +5,7 @@ import re
 import time
 import typing
 from collections import deque
+from datetime import timedelta
 from typing import NamedTuple
 
 import discord
@@ -39,6 +40,8 @@ PATTERN_B_SLOW_WINDOW_SECONDS = 30
 MEMBER_ACTIVITY_MAX_AGE_SECONDS = max(PATTERN_A_WINDOW_SECONDS, PATTERN_B_SLOW_WINDOW_SECONDS)
 PRUNE_INTERVAL_SECONDS = 60
 
+WATCHDOG_TIMEOUT_DURATION_SECONDS = 60 * 60  # 1h; mods can adjust via the existing !timeout/!untimeout
+
 
 class MessageEvent(NamedTuple):
     timestamp: float
@@ -69,8 +72,12 @@ def _prune_deque(dq: deque, max_age: float, now: float) -> None:
         dq.popleft()
 
 
+def _pattern_a_window(events, now: float) -> list:
+    return [e for e in events if now - e.timestamp <= PATTERN_A_WINDOW_SECONDS]
+
+
 def _check_pattern_a(events, now: float) -> bool:
-    window = [e for e in events if now - e.timestamp <= PATTERN_A_WINDOW_SECONDS]
+    window = _pattern_a_window(events, now)
     if len({e.channel_id for e in window}) < PATTERN_A_CHANNEL_THRESHOLD:
         return False
     return any(e.mentions_high_value_role for e in window)
@@ -84,13 +91,26 @@ def _check_pattern_b(events, now: float) -> bool:
     return slow_count >= PATTERN_B_SLOW_COUNT
 
 
+def _describe_role_pinged(window) -> str | None:
+    """A human-readable description of the high-value role mention that made a
+    Pattern A window qualify, for the alert embed."""
+    for event in window:
+        if not event.mentions_high_value_role:
+            continue
+        if event.message.mention_everyone:
+            return "@everyone/@here"
+        if event.message.role_mentions:
+            return ", ".join(role.mention for role in event.message.role_mentions)
+    return None
+
+
 def _is_exempt(guild_conf: dict, member: discord.Member) -> bool:
     if member.bot:
         return True
     perms = member.guild_permissions
     if perms.manage_messages or perms.administrator:
         return True
-    if member == member.guild.owner:
+    if member.id == member.guild.owner_id:
         return True
     if member.id in guild_conf["exempt_user_ids"]:
         return True
@@ -121,6 +141,10 @@ class Watchdog(commands.Cog):
         self.config = load_json(WATCHDOG_FILE)
         self._member_activity: dict[tuple[int, int], deque] = {}
         self._high_value_role_cache: dict[int, tuple[float, set[int]]] = {}
+        # Members already actioned for their current burst, so a single episode
+        # doesn't re-trigger a timeout/delete/alert on every subsequent message.
+        # Cleared once their activity is fully pruned (episode over) or they leave.
+        self._actioned_members: set[tuple[int, int]] = set()
         self._prune_activity.start()
 
     def cog_unload(self):
@@ -181,21 +205,30 @@ class Watchdog(commands.Cog):
         events.append(event)
         _prune_deque(events, MEMBER_ACTIVITY_MAX_AGE_SECONDS, now)
 
-        # Detection only for now — response actions land in a later step.
+        if key in self._actioned_members:
+            return  # already handled this ongoing burst; don't re-trigger every message
+
         if _check_pattern_a(events, now):
-            logger.info(
-                "Watchdog: Pattern A (raid burst) detected for %s in guild %s",
-                message.author, message.guild.id,
+            window = _pattern_a_window(events, now)
+            self._actioned_members.add(key)
+            await self._respond_to_member(
+                message.guild, message.author, window,
+                reason="Pattern A: burst across multiple channels with a high-value role mention",
+                role_pinged=_describe_role_pinged(window),
             )
         elif _check_pattern_b(events, now):
-            logger.info(
-                "Watchdog: Pattern B (flood) detected for %s in guild %s",
-                message.author, message.guild.id,
+            self._actioned_members.add(key)
+            await self._respond_to_member(
+                message.guild, message.author, list(events),
+                reason="Pattern B: message flooding",
+                role_pinged=None,
             )
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
-        self._member_activity.pop((member.guild.id, member.id), None)
+        key = (member.guild.id, member.id)
+        self._member_activity.pop(key, None)
+        self._actioned_members.discard(key)
 
     @tasks.loop(seconds=PRUNE_INTERVAL_SECONDS)
     async def _prune_activity(self):
@@ -207,6 +240,81 @@ class Watchdog(commands.Cog):
                 stale_keys.append(key)
         for key in stale_keys:
             del self._member_activity[key]
+            self._actioned_members.discard(key)
+
+    async def _respond_to_member(self, guild, member, events, reason, *, role_pinged):
+        """Timeout, then delete, then alert — in that order, so the burst is
+        stopped before cleanup, and always alert (even in shadow mode) so mods
+        can validate detections before trusting the cog with real actions."""
+        guild_conf = self._guild_conf(guild.id)
+        shadow = guild_conf["mode"] == "shadow"
+
+        timeout_ok, timeout_error = True, None
+        if not shadow:
+            try:
+                await member.timeout(
+                    timedelta(seconds=WATCHDOG_TIMEOUT_DURATION_SECONDS),
+                    reason=f"Watchdog: {reason}",
+                )
+            except discord.HTTPException as e:
+                timeout_ok, timeout_error = False, e
+
+        deleted = 0
+        if not shadow:
+            for event in events:
+                try:
+                    await event.message.delete()
+                    deleted += 1
+                except discord.HTTPException:
+                    pass
+
+        await self._send_alert(
+            guild, member, events, reason, role_pinged, shadow, timeout_ok, timeout_error, deleted
+        )
+
+    async def _send_alert(
+        self, guild, member, events, reason, role_pinged, shadow, timeout_ok, timeout_error, deleted
+    ):
+        guild_conf = self._guild_conf(guild.id)
+        log_channel_id = guild_conf["log_channel_id"]
+        log_channel = guild.get_channel(log_channel_id) if log_channel_id else None
+        if log_channel is None:
+            return
+
+        if not timeout_ok:
+            title = "⚠️ WATCHDOG: TIMEOUT FAILED — manual action required"
+            color = discord.Color.red()
+        elif shadow:
+            title = "🐕 Watchdog Detection [SHADOW MODE — no action taken]"
+            color = discord.Color.orange()
+        else:
+            title = "🐕 Watchdog Action Taken"
+            color = discord.Color.orange()
+
+        channels_touched = ", ".join(f"<#{cid}>" for cid in sorted({e.channel_id for e in events}))
+
+        embed = discord.Embed(title=title, color=color, timestamp=discord.utils.utcnow())
+        embed.add_field(name="Member", value=f"{member.mention} ({member})", inline=False)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Channels touched", value=channels_touched or "None", inline=False)
+        if role_pinged:
+            embed.add_field(name="Role pinged", value=role_pinged, inline=False)
+        embed.add_field(name="Messages deleted", value=str(deleted))
+        if not timeout_ok:
+            embed.add_field(
+                name="Timeout failed",
+                value=(
+                    f"Could not time out {member.mention} — likely a role-hierarchy issue "
+                    f"(the bot's role may sit below the member's top role). Manual action "
+                    f"needed.\nError: {timeout_error}"
+                ),
+                inline=False,
+            )
+
+        try:
+            await log_channel.send(embed=embed)
+        except discord.Forbidden:
+            pass
 
     @_prune_activity.before_loop
     async def _before_prune_activity(self):
