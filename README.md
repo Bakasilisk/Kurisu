@@ -1,6 +1,7 @@
 # Kurisutina Discord Bot
 
-A simple, lightweight Discord bot written in Python using `discord.py`.
+A simple, lightweight Discord bot written in Python using `discord.py`. Requires **Python 3.10+**
+(the code uses `X | None` union type hints).
 
 ## Features
 
@@ -17,8 +18,8 @@ and enforces role-hierarchy checks so members can't act on others with an equal 
 `channel_locks.json`) so unlocking always restores what was there before, rather than
 blindly resetting it. Warnings are persisted to `warnings.json` in the project root.
 Every action above is optionally logged as an embed to a mod-log channel — configure it
-with `modlog set #channel` (requires `Manage Server`), check it with `modlog`, and turn
-it off with `modlog disable`. The configured channel is persisted to `mod_log.json`.
+with `modlog set #channel`, check it with `modlog`, and turn it off with `modlog disable`
+(all three require `Manage Server`). The configured channel is persisted to `mod_log.json`.
 
 **Leveling** — members earn 15-25 XP per message (60s cooldown to prevent spam farming),
 with an announcement on level-up. Commands: `rank`/`level [member]` to view level/XP/server
@@ -56,6 +57,10 @@ can't be timed out); detection thresholds are fixed constants, not yet per-serve
 
 The bot loads each cog independently at startup — if one fails to load, the failure is
 logged and the rest of the bot still starts.
+
+All persisted data files (`warnings.json`, `channel_locks.json`, `mod_log.json`, `xp.json`,
+`watchdog.json`) are created automatically on first use — no manual setup needed, and
+they're already `.gitignore`d.
 
 ## Setup Instructions
 
