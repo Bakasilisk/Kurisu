@@ -9,6 +9,7 @@ from .storage import load_json, save_json_atomic
 
 WARNINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "warnings.json")
 LOCKS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "channel_locks.json")
+MODLOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mod_log.json")
 
 DURATION_RE = re.compile(r"^(\d+)([smhd])$")
 DURATION_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
@@ -50,6 +51,7 @@ class Moderation(commands.Cog):
         self.bot = bot
         self.warnings = self._load_warnings()
         self.locks = load_json(LOCKS_FILE)
+        self.mod_log_channels = load_json(MODLOG_FILE)
 
     def _load_warnings(self) -> dict:
         return load_json(WARNINGS_FILE)
@@ -60,6 +62,69 @@ class Moderation(commands.Cog):
     def _save_locks(self):
         save_json_atomic(LOCKS_FILE, self.locks)
 
+    def _save_mod_log_channels(self):
+        save_json_atomic(MODLOG_FILE, self.mod_log_channels)
+
+    async def _log_action(
+        self, ctx, action: str, color: discord.Color, *, target=None, reason=None, **fields
+    ):
+        """Post an embed describing a moderation action to the guild's configured
+        mod-log channel, if one is set. Silently no-ops if unconfigured or the
+        bot can no longer post there."""
+        channel_id = self.mod_log_channels.get(str(ctx.guild.id))
+        if not channel_id:
+            return
+        channel = ctx.guild.get_channel(channel_id)
+        if channel is None:
+            return
+
+        embed = discord.Embed(title=action, color=color, timestamp=discord.utils.utcnow())
+        embed.add_field(name="Moderator", value=f"{ctx.author.mention} ({ctx.author})")
+        if target is not None:
+            embed.add_field(name="Target", value=f"{target.mention} ({target})")
+        for name, value in fields.items():
+            embed.add_field(name=name, value=value)
+        if reason is not None:
+            embed.add_field(name="Reason", value=reason, inline=False)
+        embed.set_footer(text=f"#{ctx.channel.name}")
+
+        try:
+            await channel.send(embed=embed)
+        except discord.Forbidden:
+            pass
+
+    @commands.group(invoke_without_command=True)
+    @commands.has_permissions(manage_guild=True)
+    @commands.guild_only()
+    async def modlog(self, ctx):
+        """Show the current mod-log configuration."""
+        channel_id = self.mod_log_channels.get(str(ctx.guild.id))
+        channel = ctx.guild.get_channel(channel_id) if channel_id else None
+        if channel is None:
+            await ctx.reply(
+                "No mod-log channel is configured. Use `!modlog set #channel` to set one."
+            )
+        else:
+            await ctx.reply(f"Mod-log actions are currently sent to {channel.mention}.")
+
+    @modlog.command(name="set")
+    @commands.has_permissions(manage_guild=True)
+    @commands.guild_only()
+    async def modlog_set(self, ctx, channel: discord.TextChannel):
+        """Set the channel moderation actions are logged to."""
+        self.mod_log_channels[str(ctx.guild.id)] = channel.id
+        self._save_mod_log_channels()
+        await ctx.reply(f"📋 Mod-log channel set to {channel.mention}.")
+
+    @modlog.command(name="disable")
+    @commands.has_permissions(manage_guild=True)
+    @commands.guild_only()
+    async def modlog_disable(self, ctx):
+        """Stop logging moderation actions."""
+        had_one = self.mod_log_channels.pop(str(ctx.guild.id), None) is not None
+        self._save_mod_log_channels()
+        await ctx.reply("📋 Mod-log disabled." if had_one else "Mod-log was not enabled.")
+
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MissingPermissions):
             await ctx.reply("You don't have permission to do that.")
@@ -69,6 +134,8 @@ class Moderation(commands.Cog):
             await ctx.reply("I couldn't find that member.")
         elif isinstance(error, commands.UserNotFound):
             await ctx.reply("I couldn't find that user.")
+        elif isinstance(error, commands.ChannelNotFound):
+            await ctx.reply("I couldn't find that channel.")
         elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
             await ctx.reply(str(error) or "Invalid or missing argument.")
         else:
@@ -85,6 +152,7 @@ class Moderation(commands.Cog):
             return
         await member.kick(reason=f"{ctx.author}: {reason}")
         await ctx.reply(f"👢 Kicked {member.mention} — {reason}")
+        await self._log_action(ctx, "Member Kicked", discord.Color.orange(), target=member, reason=reason)
 
     @commands.command()
     @commands.has_permissions(ban_members=True)
@@ -97,6 +165,7 @@ class Moderation(commands.Cog):
             return
         await member.ban(reason=f"{ctx.author}: {reason}", delete_message_days=0)
         await ctx.reply(f"🔨 Banned {member.mention} — {reason}")
+        await self._log_action(ctx, "Member Banned", discord.Color.red(), target=member, reason=reason)
 
     @commands.command()
     @commands.has_permissions(ban_members=True)
@@ -106,6 +175,7 @@ class Moderation(commands.Cog):
         """Unban a user by ID or exact username."""
         await ctx.guild.unban(user, reason=f"{ctx.author}: {reason}")
         await ctx.reply(f"✅ Unbanned {user.mention} — {reason}")
+        await self._log_action(ctx, "Member Unbanned", discord.Color.green(), target=user, reason=reason)
 
     @commands.command(aliases=["mute"])
     @commands.has_permissions(moderate_members=True)
@@ -124,6 +194,10 @@ class Moderation(commands.Cog):
             return
         await member.timeout(delta, reason=f"{ctx.author}: {reason}")
         await ctx.reply(f"🔇 Timed out {member.mention} for {duration} — {reason}")
+        await self._log_action(
+            ctx, "Member Timed Out", discord.Color.orange(), target=member, reason=reason,
+            Duration=duration,
+        )
 
     @commands.command(aliases=["unmute"])
     @commands.has_permissions(moderate_members=True)
@@ -133,6 +207,9 @@ class Moderation(commands.Cog):
         """Remove an active timeout from a member."""
         await member.timeout(None, reason=f"{ctx.author}: {reason}")
         await ctx.reply(f"🔊 Removed timeout from {member.mention}")
+        await self._log_action(
+            ctx, "Timeout Removed", discord.Color.green(), target=member, reason=reason
+        )
 
     @commands.command()
     @commands.has_permissions(moderate_members=True)
@@ -157,6 +234,10 @@ class Moderation(commands.Cog):
 
         await ctx.reply(
             f"⚠️ Warned {member.mention} — {reason} (total: {len(member_warnings)})"
+        )
+        await self._log_action(
+            ctx, "Member Warned", discord.Color.gold(), target=member, reason=reason,
+            **{"Total warnings": str(len(member_warnings))},
         )
 
     @commands.command(name="warnings", aliases=["warnlist"])
@@ -193,6 +274,10 @@ class Moderation(commands.Cog):
         count = len(guild_warnings.pop(str(member.id), []))
         self._save_warnings()
         await ctx.reply(f"🧹 Cleared {count} warning(s) for {member.mention}")
+        await self._log_action(
+            ctx, "Warnings Cleared", discord.Color.blue(), target=member,
+            **{"Warnings cleared": str(count)},
+        )
 
     @commands.command(aliases=["clear"])
     @commands.has_permissions(manage_messages=True)
@@ -210,6 +295,14 @@ class Moderation(commands.Cog):
         deleted = await ctx.channel.purge(limit=amount + 1, check=check)
         confirmation = await ctx.send(f"🧹 Deleted {len(deleted) - 1} message(s).")
         await confirmation.delete(delay=5)
+        await self._log_action(
+            ctx, "Messages Purged", discord.Color.blue(),
+            **{
+                "Channel": ctx.channel.mention,
+                "Messages deleted": str(len(deleted) - 1),
+                "Filtered to": member.mention if member else "Everyone",
+            },
+        )
 
     @commands.command()
     @commands.has_permissions(manage_channels=True)
@@ -225,6 +318,10 @@ class Moderation(commands.Cog):
             await ctx.reply("🐇 Slowmode disabled.")
         else:
             await ctx.reply(f"🐌 Slowmode set to {seconds} second(s).")
+        await self._log_action(
+            ctx, "Slowmode Changed", discord.Color.blue(),
+            **{"Channel": ctx.channel.mention, "Delay": f"{seconds}s"},
+        )
 
     @commands.command()
     @commands.has_permissions(manage_channels=True)
@@ -245,6 +342,10 @@ class Moderation(commands.Cog):
             ctx.guild.default_role, overwrite=overwrite, reason=f"{ctx.author}: {reason}"
         )
         await ctx.reply(f"🔒 Channel locked — {reason}")
+        await self._log_action(
+            ctx, "Channel Locked", discord.Color.dark_red(), reason=reason,
+            Channel=ctx.channel.mention,
+        )
 
     @commands.command()
     @commands.has_permissions(manage_channels=True)
@@ -264,6 +365,10 @@ class Moderation(commands.Cog):
         self.locks.pop(channel_id, None)
         self._save_locks()
         await ctx.reply(f"🔓 Channel unlocked — {reason}")
+        await self._log_action(
+            ctx, "Channel Unlocked", discord.Color.green(), reason=reason,
+            Channel=ctx.channel.mention,
+        )
 
 
 async def setup(bot):
