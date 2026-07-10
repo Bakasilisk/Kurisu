@@ -1,4 +1,8 @@
+import logging
+
 from discord.ext import commands
+
+logger = logging.getLogger("kurisu")
 
 
 class Triggers(commands.Cog):
@@ -19,7 +23,11 @@ class Triggers(commands.Cog):
 
         # Check if "horny" is in the message content (case-insensitive)
         if "horny" in message.content.lower():
-            await message.reply(f"{message.author.mention} ist Horny!")
+            logger.info("horny trigger matched in message %s from %s", message.id, message.author)
+            try:
+                await message.reply(f"{message.author.mention} ist Horny!")
+            except Exception:
+                logger.exception("horny trigger failed to send reply for message %s", message.id)
 
 
 async def setup(bot):
