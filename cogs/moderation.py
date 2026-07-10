@@ -1,10 +1,11 @@
-import json
 import os
 import re
 from datetime import timedelta
 
 import discord
 from discord.ext import commands
+
+from .storage import load_json, save_json_atomic
 
 WARNINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "warnings.json")
 
@@ -28,14 +29,10 @@ class Moderation(commands.Cog):
         self.warnings = self._load_warnings()
 
     def _load_warnings(self) -> dict:
-        if os.path.exists(WARNINGS_FILE):
-            with open(WARNINGS_FILE) as f:
-                return json.load(f)
-        return {}
+        return load_json(WARNINGS_FILE)
 
     def _save_warnings(self):
-        with open(WARNINGS_FILE, "w") as f:
-            json.dump(self.warnings, f, indent=2)
+        save_json_atomic(WARNINGS_FILE, self.warnings)
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MissingPermissions):

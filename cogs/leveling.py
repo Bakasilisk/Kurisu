@@ -1,16 +1,19 @@
-import json
+import asyncio
 import os
 import random
 import time
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
+
+from .storage import load_json, save_json_atomic
 
 XP_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "xp.json")
 
 XP_MIN = 15
 XP_MAX = 25
 XP_COOLDOWN_SECONDS = 60
+XP_FLUSH_INTERVAL_SECONDS = 30
 
 
 def total_xp_for_level(level: int) -> int:
@@ -29,18 +32,30 @@ def level_from_xp(xp: int) -> int:
 class Leveling(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.xp = self._load_xp()
+        self.xp = load_json(XP_FILE)
         self._cooldowns = {}
+        self._dirty = False
+        self._flush_xp.start()
 
-    def _load_xp(self) -> dict:
-        if os.path.exists(XP_FILE):
-            with open(XP_FILE) as f:
-                return json.load(f)
-        return {}
+    def cog_unload(self):
+        self._flush_xp.cancel()
+        if self._dirty:
+            self._dirty = False
+            save_json_atomic(XP_FILE, self._snapshot())
 
-    def _save_xp(self):
-        with open(XP_FILE, "w") as f:
-            json.dump(self.xp, f, indent=2)
+    def _snapshot(self) -> dict:
+        """A shallow copy safe to hand to a background thread for serialization."""
+        return {guild_id: dict(members) for guild_id, members in self.xp.items()}
+
+    @tasks.loop(seconds=XP_FLUSH_INTERVAL_SECONDS)
+    async def _flush_xp(self):
+        if self._dirty:
+            self._dirty = False
+            await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
+
+    @_flush_xp.before_loop
+    async def _before_flush_xp(self):
+        await self.bot.wait_until_ready()
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MissingPermissions):
@@ -71,7 +86,7 @@ class Leveling(commands.Cog):
 
         new_xp = old_xp + random.randint(XP_MIN, XP_MAX)
         guild_xp[user_id] = new_xp
-        self._save_xp()
+        self._dirty = True
 
         new_level = level_from_xp(new_xp)
         if new_level > old_level:
@@ -138,7 +153,8 @@ class Leveling(commands.Cog):
         """Reset a member's XP and level."""
         guild_xp = self.xp.get(str(ctx.guild.id), {})
         had_xp = guild_xp.pop(str(member.id), None) is not None
-        self._save_xp()
+        self._dirty = False
+        await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
         if had_xp:
             await ctx.reply(f"🧹 Reset XP for {member.mention}")
         else:
