@@ -35,11 +35,15 @@ class Leveling(commands.Cog):
         self.xp = load_json(XP_FILE)
         self._cooldowns = {}
         self._dirty = False
+        self._xp_lock = asyncio.Lock()
         self._flush_xp.start()
 
     def cog_unload(self):
         self._flush_xp.cancel()
-        if self._dirty:
+        # cog_unload can't be a coroutine, so it can't await self._xp_lock.
+        # If a flush is already in flight on the thread pool, that write
+        # already carries the latest data, so skip ours rather than race it.
+        if self._dirty and not self._xp_lock.locked():
             self._dirty = False
             save_json_atomic(XP_FILE, self._snapshot())
 
@@ -49,9 +53,10 @@ class Leveling(commands.Cog):
 
     @tasks.loop(seconds=XP_FLUSH_INTERVAL_SECONDS)
     async def _flush_xp(self):
-        if self._dirty:
-            self._dirty = False
-            await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
+        async with self._xp_lock:
+            if self._dirty:
+                self._dirty = False
+                await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
 
     @_flush_xp.before_loop
     async def _before_flush_xp(self):
@@ -153,8 +158,9 @@ class Leveling(commands.Cog):
         """Reset a member's XP and level."""
         guild_xp = self.xp.get(str(ctx.guild.id), {})
         had_xp = guild_xp.pop(str(member.id), None) is not None
-        self._dirty = False
-        await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
+        async with self._xp_lock:
+            self._dirty = False
+            await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
         if had_xp:
             await ctx.reply(f"🧹 Reset XP for {member.mention}")
         else:
