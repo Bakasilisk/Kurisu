@@ -5,6 +5,10 @@ A simple, lightweight Discord bot written in Python using `discord.py`.
 ## Features
 - Listens to chat messages and triggers whenever anyone says "kurisutina" (case-insensitive).
 - Replies with: _Hör auf mich_ **_Kurisutina_** _zu nennen!_ (cursive, with her name in bold).
+- Moderation commands (prefix `!`): `kick`, `ban`, `unban`, `timeout`/`mute`, `untimeout`/`unmute`,
+  `warn`, `warnings`, `clearwarnings`, `purge`/`clear`, `slowmode`, `lock`, `unlock`.
+  Each requires the relevant Discord permission (e.g. `Kick Members`, `Ban Members`,
+  `Moderate Members`, `Manage Messages`, `Manage Channels`) on both the caller and the bot.
 
 ## Setup Instructions
 
@@ -28,6 +32,8 @@ A simple, lightweight Discord bot written in Python using `discord.py`.
      - `Read Messages/View Channels`
      - `Send Messages`
      - `Read Message History`
+     - `Kick Members`, `Ban Members`, `Moderate Members`, `Manage Messages`, `Manage Channels`
+       (needed for the moderation commands)
    - Copy the generated URL and open it in your browser to invite the bot to your server.
 
 4. **Run the Bot:**

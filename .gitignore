@@ -6,6 +6,9 @@ ENV/
 # Configuration / Secrets
 .env
 
+# Moderation data
+warnings.json
+
 # Python Cache
 __pycache__/
 *.pyc
