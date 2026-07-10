@@ -1,8 +1,11 @@
 import asyncio
+import logging
 import os
 
 import discord
 from discord.ext import commands
+
+logger = logging.getLogger("kurisu")
 
 # Simple loader for .env files without requiring external dependencies
 if os.path.exists(".env"):
@@ -33,20 +36,23 @@ INITIAL_EXTENSIONS = [
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
-    print("------")
+    logger.info("Logged in as %s (ID: %s)", bot.user.name, bot.user.id)
 
 
 async def main():
     async with bot:
         for extension in INITIAL_EXTENSIONS:
-            await bot.load_extension(extension)
+            try:
+                await bot.load_extension(extension)
+            except commands.ExtensionError:
+                logger.exception("Failed to load extension %s", extension)
         await bot.start(TOKEN)
 
 
 if __name__ == "__main__":
+    discord.utils.setup_logging()
     if not TOKEN:
-        print("Error: DISCORD_TOKEN environment variable is not set.")
-        print("Please create a .env file containing: DISCORD_TOKEN=your_token_here")
+        logger.error("DISCORD_TOKEN environment variable is not set.")
+        logger.error("Please create a .env file containing: DISCORD_TOKEN=your_token_here")
     else:
         asyncio.run(main())

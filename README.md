@@ -3,12 +3,20 @@
 A simple, lightweight Discord bot written in Python using `discord.py`.
 
 ## Features
-- Listens to chat messages and triggers whenever anyone says "kurisutina" (case-insensitive).
-- Replies with: _Hör auf mich_ **_Kurisutina_** _zu nennen!_ (cursive, with her name in bold).
-- Moderation commands (prefix `!`): `kick`, `ban`, `unban`, `timeout`/`mute`, `untimeout`/`unmute`,
-  `warn`, `warnings`, `clearwarnings`, `purge`/`clear`, `slowmode`, `lock`, `unlock`.
-  Each requires the relevant Discord permission (e.g. `Kick Members`, `Ban Members`,
-  `Moderate Members`, `Manage Messages`, `Manage Channels`) on both the caller and the bot.
+
+**Triggers**
+- Replies whenever anyone says "kurisutina" (case-insensitive): _Hör auf mich_ **_Kurisutina_** _zu nennen!_
+- Replies whenever anyone says "horny" (case-insensitive): "`@user` ist Horny!"
+
+**Moderation** (prefix `!`): `kick`, `ban`, `unban`, `timeout`/`mute`, `untimeout`/`unmute`,
+`warn`, `warnings`/`warnlist`, `clearwarnings`, `purge`/`clear`, `slowmode`, `lock`, `unlock`.
+Each requires the relevant Discord permission (e.g. `Kick Members`, `Ban Members`,
+`Moderate Members`, `Manage Messages`, `Manage Channels`) on both the caller and the bot,
+and enforces role-hierarchy checks so members can't act on others with an equal or higher role.
+Warnings are persisted to `warnings.json` in the project root.
+
+The bot loads each cog independently at startup — if one fails to load, the failure is
+logged and the rest of the bot still starts.
 
 ## Setup Instructions
 
