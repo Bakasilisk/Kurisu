@@ -15,6 +15,11 @@ Each requires the relevant Discord permission (e.g. `Kick Members`, `Ban Members
 and enforces role-hierarchy checks so members can't act on others with an equal or higher role.
 Warnings are persisted to `warnings.json` in the project root.
 
+**Leveling** — members earn 15-25 XP per message (60s cooldown to prevent spam farming),
+with an announcement on level-up. Commands: `rank`/`level [member]` to view level/XP/server
+rank, `leaderboard`/`lb`/`top [count]` for the server's top members, and `resetxp <member>`
+(requires `Moderate Members`) to clear a member's progress. XP is persisted to `xp.json`.
+
 The bot loads each cog independently at startup — if one fails to load, the failure is
 logged and the rest of the bot still starts.
 

@@ -9,6 +9,9 @@ ENV/
 # Moderation data
 warnings.json
 
+# Leveling data
+xp.json
+
 # Python Cache
 __pycache__/
 *.pyc

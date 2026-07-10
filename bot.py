@@ -31,6 +31,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 INITIAL_EXTENSIONS = [
     "cogs.triggers",
     "cogs.moderation",
+    "cogs.leveling",
 ]
 
 
