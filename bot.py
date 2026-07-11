@@ -56,6 +56,7 @@ INITIAL_EXTENSIONS = [
     "cogs.moderation",
     "cogs.leveling",
     "cogs.watchdog",
+    "cogs.verification",
 ]
 
 
