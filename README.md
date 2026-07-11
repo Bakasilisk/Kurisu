@@ -1,48 +1,108 @@
 # Kurisutina Discord Bot
 
 A simple, lightweight Discord bot written in Python using `discord.py`. Requires **Python 3.10+**
-(the code uses `X | None` union type hints).
+(the code uses `X | None` union type hints). Command prefix is `.`.
+
+- [Features](#features):
+  [Triggers](#triggers) ·
+  [Moderation](#moderation) ·
+  [Leveling](#leveling) ·
+  [Economy](#economy) ·
+  [Verification](#verification) ·
+  [Watchdog](#watchdog) ·
+  [Palantir](#palantir) ·
+  [Help](#help) ·
+  [Management](#management) ·
+  [Logging & data files](#logging--data-files)
+- [Setup Instructions](#setup-instructions)
+- [Running as a Background Service (systemd)](#running-as-a-background-service-systemd)
 
 ## Features
 
-**Triggers**
-- Replies whenever anyone says "kurisutina" (case-insensitive): _Hör auf mich_ **_Kurisutina_** _zu nennen!_
-- Replies whenever anyone says "horny" (case-insensitive): "`@user` ist Horny!"
-- `.nuko`: posts a chain of nuko emotes with a random-length middle section.
+Moderation, palantir, management, and help commands are also available as `/` slash commands
+with autocomplete descriptions; slash invocations reply ephemerally (visible only to the
+invoker) while `.` invocations reply publicly. The other cogs are prefix-only.
 
-**Moderation** (prefix `.`, and also available as `/` slash commands with autocomplete
-descriptions): `kick`, `ban`, `unban`, `timeout`/`mute`, `untimeout`/`unmute`,
-`warn`, `warnings`/`warnlist`, `clearwarnings`, `purge`/`clear`, `slowmode`, `lock`, `unlock`.
-Each requires the relevant Discord permission (e.g. `Kick Members`, `Ban Members`,
-`Moderate Members`, `Manage Messages`, `Manage Channels`) on both the caller and the bot,
-and enforces role-hierarchy checks so members can't act on others with an equal or higher role.
-Slash (`/`) invocations reply ephemerally (visible only to the moderator); `.` invocations
-reply publicly as before — either way, every action is recorded to `logs/kurisu.log` and to
-the mod-log channel if one is configured. `lock`/`unlock` snapshot each channel's exact
-pre-lock permission state (persisted to `channel_locks.json`) so unlocking always restores
-what was there before, rather than blindly resetting it. Warnings are persisted to
-`warnings.json` in the project root. Configure the mod-log channel with `modlog set #channel`,
-check it with `modlog`, and turn it off with `modlog disable` (all three require
-`Manage Server`). The configured channel is persisted to `mod_log.json`.
+### Triggers
 
-**Leveling** — members earn 15-25 XP per message (60s cooldown to prevent spam farming),
-with an announcement on level-up. Commands: `rank`/`level [member]` to view level/XP/server
-rank and messages sent today, `leaderboard`/`lb`/`top [count]` for the server's top members,
-`resetxp <member>` (requires `Moderate Members`) to clear a member's progress, and `setxp
-<member> <amount>` (requires `Moderate Members`) to set a member's XP directly. XP is persisted
-to `xp.json` and message counts to `messages.json` (reset monthly).
+Auto-replies on every message:
 
-**Economy** — a simple bits currency. `payday` grants 120 bits once every 12 hours per member
-(tracked per server), showing the member's new balance and server rank on collection, or the
-time remaining if already claimed. Commands: `payday`, `balance`/`bal [member]` to check bits
-without claiming, `richest [count]` for the server's top bit holders, `give <member> <amount>`
-to transfer bits to another member, `coinflip`/`cf <amount>` to bet bits on a coin flip
-(bets between 10 and 1000 bits), and `setbits <member> <amount>` (requires `Moderate Members`)
-to correct a member's balance. Bits are persisted to `economy.json`.
+- "kurisutina" anywhere in a message (case-insensitive): _Hör auf mich_ **_Kurisutina_** _zu nennen!_
+- "horny" (case-insensitive): "`@user` ist Horny!"
 
-**Watchdog** — automated detection of raid/spam behavior, reacting faster than a human mod
-can (or when none are online). Ships **in shadow mode by default**: it detects and alerts,
-but takes no action until a mod runs `.watchdog mode active`. Detects:
+| Command | Does |
+|---|---|
+| `nuko` | Posts a chain of nuko emotes with a random-length middle section |
+| `füße` | Mentions a specific (hardcoded) user |
+
+### Moderation
+
+| Command | Does | Requires |
+|---|---|---|
+| `kick <member> [reason]` | Kick a member | Kick Members |
+| `ban <member> [reason]` | Ban a member | Ban Members |
+| `unban <user> [reason]` | Unban by ID or exact username | Ban Members |
+| `timeout` / `mute <member> <duration> [reason]` | Time out (e.g. `10m`, `2h`, `1d`) | Moderate Members |
+| `untimeout` / `unmute <member> [reason]` | Remove an active timeout | Moderate Members |
+| `warn <member> [reason]` | Warn a member and record it | Moderate Members |
+| `warnings` / `warnlist <member>` | List a member's warnings | Moderate Members |
+| `clearwarnings <member>` | Clear a member's warnings | Moderate Members |
+| `purge` / `clear <amount> [member]` | Bulk-delete messages | Manage Messages |
+| `slowmode <seconds>` | Set the channel's slowmode | Manage Channels |
+| `lock` / `unlock [reason]` | Block/restore @everyone sending in the channel | Manage Channels |
+| `modlog` / `modlog set #channel` / `modlog disable` | Show/set/disable the mod-log channel | Manage Server |
+
+- Each command requires its permission on both the caller and the bot, and enforces
+  role-hierarchy checks so members can't act on others with an equal or higher role.
+- Every action is recorded to `logs/kurisu.log` and to the mod-log channel if one is
+  configured — so ephemeral slash actions are still traceable.
+- `lock`/`unlock` snapshot each channel's exact pre-lock permission state (persisted, so it
+  survives restarts) and restore what was there before, rather than blindly resetting it.
+
+### Leveling
+
+Members earn 15-25 XP per message (60s cooldown to prevent spam farming), with an
+announcement on level-up. Per-member message counts reset monthly.
+
+| Command | Does | Requires |
+|---|---|---|
+| `rank` / `level [member]` | Level, XP, server rank, and messages sent today | — |
+| `leaderboard` / `lb` / `top [count]` | The server's top members | — |
+| `resetxp <member>` | Clear a member's progress | Moderate Members |
+| `setxp <member> <amount>` | Set a member's XP directly | Moderate Members |
+
+### Economy
+
+A simple bits currency, tracked per server.
+
+| Command | Does | Requires |
+|---|---|---|
+| `payday` | Collect 120 bits, once every 12 hours; shows the new balance and server rank, or the time remaining if already claimed | — |
+| `balance` / `bal [member]` | Check bits without claiming | — |
+| `richest [count]` | The server's top bit holders | — |
+| `give <member> <amount>` | Transfer bits to another member | — |
+| `coinflip` / `cf <amount>` | Bet bits on a coin flip (10-1000 bits) | — |
+| `setbits <member> <amount>` | Correct a member's balance | Moderate Members |
+
+### Verification
+
+Role-gated verification: members holding the configured "granter" role can hand out the
+configured role with `verify` — no moderator permission needed. The bot needs
+`Manage Roles`, with its top role above the granted role.
+
+| Command | Does | Requires |
+|---|---|---|
+| `verify <member>` | Give the member the configured role | the granter role |
+| `verification` | Show the current configuration | Manage Server |
+| `verification granter <role>` | Set the role allowed to use `verify` | Manage Server |
+| `verification target <role>` | Set the role `verify` assigns | Manage Server |
+
+### Watchdog
+
+Automated detection of raid/spam behavior, reacting faster than a human mod can (or when
+none are online). Ships **in shadow mode by default**: it detects and alerts, but takes no
+action until a mod runs `.watchdog mode active`. Detects:
+
 - **Pattern A (sleeper raid/scam bursts):** an account posting in 4+ distinct channels within
   20 seconds while mentioning a role above a member-count threshold (auto-detected as
   "high-value" — no manual role list to maintain; `@everyone`/`@here` always counts).
@@ -53,63 +113,107 @@ but takes no action until a mod runs `.watchdog mode active`. Detects:
 
 Response (in active mode) is always **timeout, then delete, then alert** — never an outright
 ban, to bound the damage of a false positive. A failed timeout (e.g. the account's role sits
-above the bot's) produces a loud, distinct alert rather than failing silently. If 2+ accounts
-independently trip Pattern A, or 3+ post duplicate content, within 60 seconds of each other,
-watchdog also triggers a temporary **lockdown**: `@everyone` loses send permission in every
-text channel (any configured protected role(s) keep it), auto-lifting after 15 minutes unless
-it's a repeat trigger within the last hour, in which case it stays locked until a mod runs
-`.watchdog unlock`. Every channel's exact pre-lockdown permission state is snapshotted first
-and restored exactly on lift.
+above the bot's) produces a loud, distinct alert rather than failing silently.
 
-Commands (all require `Manage Server`): `watchdog`/`watchdog status`, `watchdog mode
-<shadow|active>`, `watchdog setlog #channel`, `watchdog exempt add/remove/list <role|member>`,
-`watchdog protectedrole add/remove/list <role>`, `watchdog unlock`. Config (including active
-lockdown state, so a restart mid-lockdown resumes correctly) is persisted to `watchdog.json`.
+If 2+ accounts independently trip Pattern A, or 3+ post duplicate content, within 60 seconds
+of each other, watchdog also triggers a temporary **lockdown**: `@everyone` loses send
+permission in every text channel (any configured protected role(s) keep it), auto-lifting
+after 15 minutes unless it's a repeat trigger within the last hour, in which case it stays
+locked until a mod runs `.watchdog unlock`. Every channel's exact pre-lockdown permission
+state is snapshotted first and restored exactly on lift; lockdown state is persisted, so a
+restart mid-lockdown resumes correctly.
+
+All watchdog commands require `Manage Server`:
+
+| Command | Does |
+|---|---|
+| `watchdog` / `watchdog status` | Show the current configuration and status |
+| `watchdog mode <shadow\|active>` | Switch between alert-only and enforcing |
+| `watchdog setlog #channel` | Set the alert channel |
+| `watchdog exempt add/remove/list <role\|member>` | Exempt roles/members from all checks |
+| `watchdog protectedrole add/remove/list <role>` | Roles that keep send permission during lockdown |
+| `watchdog unlock` | Lift an active lockdown |
 
 Known v1 limitations: webhook messages are safely ignored rather than acted upon (a webhook
 can't be timed out); detection thresholds are fixed constants, not yet per-server tunable.
 
-**Palantir** — total surveillance logging: every join/leave, message edit/delete, role/nickname
-change, mod action, channel/role/server-structure change, voice move, and invite create/use is
-streamed as an embed to a configured log channel, split into independently mutable categories:
-`members`, `messages`, `roles`, `voice`, `modactions`, `invites`, `server`. Message edits/deletes
-show the pre-change content from palantir's own disk-backed cache (`palantir_messages.json`,
-capped at 20,000 messages and 14 days per server, oldest evicted/expired automatically — not a
-config option). Ban/kick/timeout/role-grant actions are attributed to the responsible moderator
-by name via the audit log (requires the *View Audit Log* permission); ban/unban still log
-(unattributed) without it. A deleted message likewise names the moderator who removed it when
-a mod deletes another member's message (best-effort via the audit log). Attachment archiving is a runtime toggle (`palantir archive on|off`,
-default off): when on, attached files are downloaded to `palantir_attachments/` on post and
-re-uploaded on delete so they survive Discord's CDN URL expiry, instead of a possibly-expired
-URL.
+### Palantir
 
-Commands (all require `Manage Server`): `palantir`/`palantir status`, `palantir setchannel
-#channel`, `palantir disable`, `palantir mute/unmute <category>`, `palantir archive <on|off>`.
-Config is persisted to `palantir.json`.
+Total surveillance logging: every join/leave, message edit/delete, role/nickname change,
+mod action, channel/role/server-structure change, voice move, and invite create/use is
+streamed as an embed to a configured log channel, split into independently mutable
+categories: `members`, `messages`, `roles`, `voice`, `modactions`, `invites`, `server`.
 
-**Help** — `.help`/`/help` lists every command you can currently use, grouped by cog, with a
-one-line description each. Slash replies are ephemeral; `.` replies are public.
+- Message edits/deletes show the pre-change content from palantir's own disk-backed cache,
+  capped at 20,000 messages and 14 days per server, oldest evicted/expired automatically —
+  not a config option.
+- Ban/kick/timeout/role-grant actions are attributed to the responsible moderator by name
+  via the audit log (requires the *View Audit Log* permission); ban/unban still log
+  (unattributed) without it. A deleted message likewise names the moderator who removed it
+  when a mod deletes another member's message (best-effort via the audit log).
+- Attachment archiving is a runtime toggle, default off: when on, attached files are
+  downloaded to `palantir_attachments/` on post and re-uploaded on delete so they survive
+  Discord's CDN URL expiry, instead of a possibly-expired URL.
 
-**Management** — bot administration from Discord, available as both `.` prefix and `/` slash
-commands; slash invocations reply ephemerally (visible only to you). Owner-only (bot owner
-account): `cog list/load/unload/reload <name>`, `reloadall`, `sync`, `guilds`, `leave
-[guild_id]` (leaves the current server when no ID is given), `presence [text]` (no text
-clears it), `shutdown`. Server admins (`Manage Server`): `feature list/enable/disable <name>`
-to soft-disable a cog's behavior in their own guild only. Both levels persist to
-`management.json`.
+All palantir commands require `Manage Server`:
+
+| Command | Does |
+|---|---|
+| `palantir` / `palantir status` | Show the current configuration |
+| `palantir setchannel #channel` | Set the log channel |
+| `palantir disable` | Turn logging off |
+| `palantir mute/unmute <category>` | Suppress/resume one category |
+| `palantir archive <on\|off>` | Toggle attachment archiving |
+
+### Help
+
+`.help` / `/help` lists every command you can currently use, grouped by cog, with a one-line
+description each.
+
+### Management
+
+Bot administration from Discord. Owner-only (bot owner account):
+
+| Command | Does |
+|---|---|
+| `cog list/load/unload/reload <name>` | Manage cogs at runtime |
+| `reloadall` | Reload every loaded cog |
+| `sync` | Re-sync slash commands with Discord |
+| `guilds` | List the servers the bot is in |
+| `leave [guild_id]` | Leave a server (the current one when no ID is given) |
+| `presence [text]` | Set the bot's status text (no text clears it) |
+| `shutdown` | Shut the bot down cleanly |
+
+Server admins (`Manage Server`):
+
+| Command | Does |
+|---|---|
+| `feature list/enable/disable <name>` | Soft-disable a cog's behavior in their own guild only |
 
 The bot loads each cog independently at startup — if one fails to load, the failure is
 logged and the rest of the bot still starts. Extensions unloaded via `.cog unload` stay
-unloaded across restarts (skipped by `bot.py`), and `management` itself can't be unloaded.
+unloaded across restarts, and `management` itself can't be unloaded.
 
-**Logging** — in addition to the console, everything is written to a rotating logfile at
-`logs/kurisu.log` (5 MB per file, 3 backups kept), so errors can be reviewed without needing
-to capture the terminal output. This covers uncaught errors from commands and events too,
-since discord.py routes those through the same logging system.
+### Logging & data files
 
-All persisted data files (`warnings.json`, `channel_locks.json`, `mod_log.json`, `xp.json`,
-`economy.json`, `watchdog.json`, `management.json`, `messages.json`, `palantir.json`,
-`palantir_messages.json`) are created automatically on first use — no manual setup needed.
+In addition to the console, everything is written to a rotating logfile at `logs/kurisu.log`
+(5 MB per file, 3 backups kept), so errors can be reviewed without needing to capture the
+terminal output. This covers uncaught errors from commands and events too, since discord.py
+routes those through the same logging system.
+
+All data files live in the project root and are created automatically on first use — no
+manual setup needed:
+
+| File | Holds |
+|---|---|
+| `warnings.json`, `channel_locks.json`, `mod_log.json` | Warnings, pre-lock permission snapshots, mod-log channel |
+| `xp.json`, `messages.json` | XP, monthly message counts |
+| `economy.json` | Bits balances |
+| `verification.json` | Verification role configuration |
+| `watchdog.json` | Watchdog config, including active lockdown state |
+| `palantir.json`, `palantir_messages.json` | Palantir config, message cache |
+| `management.json` | Unloaded extensions, per-guild feature toggles |
+
 Palantir additionally stores archived attachment bytes under `palantir_attachments/` when
 archiving is turned on.
 
@@ -133,14 +237,14 @@ archiving is turned on.
 3. **Invite the Bot to your Server:**
    - In the Developer Portal, go to **OAuth2** -> **URL Generator**.
    - Under **Scopes**, select `bot` and `applications.commands` (the latter is required for
-     the moderation cog's `/` slash commands to register).
+     the `/` slash commands to register).
    - Under **Bot Permissions**, select:
      - `Read Messages/View Channels`
      - `Send Messages`
      - `Read Message History`
      - `Kick Members`, `Ban Members`, `Moderate Members`, `Manage Messages`, `Manage Channels`,
-       `Manage Roles` (needed for the moderation commands, `lock`/`unlock`, and watchdog's
-       lockdown mechanism)
+       `Manage Roles` (needed for the moderation commands, `lock`/`unlock`, verification's
+       role grants, and watchdog's lockdown mechanism)
      - `View Audit Log` (needed for palantir to attribute ban/kick/timeout/role-grant actions
        to the responsible moderator by name)
    - Copy the generated URL and open it in your browser to invite the bot to your server.
@@ -191,5 +295,5 @@ it stops the moment you disconnect. To keep it running on a server after an SSH 
    sudo systemctl restart kurisu
    sudo systemctl stop kurisu
    ```
-   `.shutdown` (owner-only, see Management below) exits the bot cleanly, so systemd won't
-   auto-restart it — only a crash triggers the automatic restart.
+   `.shutdown` (owner-only, see [Management](#management)) exits the bot cleanly, so systemd
+   won't auto-restart it — only a crash triggers the automatic restart.
