@@ -405,7 +405,9 @@ class Watchdog(commands.Cog):
             if guild is None:
                 continue
             expires_at = lockdown.get("expires_at")
-            remaining = (expires_at - now_epoch) if expires_at else 0
+            if expires_at is None:
+                continue  # stay-locked lockdown: holds until a manual `.watchdog unlock`
+            remaining = expires_at - now_epoch
             if remaining <= 0:
                 await self._lift_lockdown(guild, manual=False)
             else:
@@ -416,13 +418,18 @@ class Watchdog(commands.Cog):
     async def _start_lockdown(self, guild: discord.Guild, reason: str):
         """Deny @everyone send_messages in every text channel, with an explicit
         allow carve-out for any configured protected role(s), snapshotting each
-        channel's prior state first so it can be restored exactly on lift."""
+        channel's prior state first so it can be restored exactly on lift.
+        In shadow mode only the alert is sent — no permissions are touched."""
         lock = self._lockdown_locks.setdefault(guild.id, asyncio.Lock())
         async with lock:
             guild_conf = self._guild_conf(guild.id)
             lockdown = guild_conf["lockdown"]
             if lockdown["active"]:
                 return  # already locked; don't re-snapshot an already-modified state
+
+            if guild_conf["mode"] == "shadow":
+                await self._send_lockdown_alert(guild, reason, stay_locked=False, shadow=True)
+                return
 
             protected_roles = [guild.get_role(rid) for rid in guild_conf["protected_role_ids"]]
             protected_roles = [r for r in protected_roles if r is not None]
@@ -483,20 +490,25 @@ class Watchdog(commands.Cog):
                     ", ".join(f"{c.id} ({e})" for c, e in failures),
                 )
 
+            # A repeat trigger within the last hour means this is an ongoing raid,
+            # not a one-off — stay locked until a mod manually lifts it instead of
+            # auto-lifting into what might still be an active attack. Persisted as
+            # expires_at=None so a restart holds the lockdown too instead of
+            # rehydrating it into an auto-lifting one.
+            stay_locked = len(lockdown["trigger_timestamps"]) > 1
+
             # Always persist whatever succeeded, even if some channels failed —
             # a partially-applied lockdown must still be fully restorable.
             now_epoch = time.time()
             lockdown["active"] = True
             lockdown["started_at"] = now_epoch
-            lockdown["expires_at"] = now_epoch + LOCKDOWN_MAX_DURATION_SECONDS
+            lockdown["expires_at"] = (
+                None if stay_locked else now_epoch + LOCKDOWN_MAX_DURATION_SECONDS
+            )
             lockdown["channel_overwrites"] = channel_overwrites
             lockdown["protected_role_overwrites"] = protected_role_overwrites
             self._save_config()
 
-            # A repeat trigger within the last hour means this is an ongoing raid,
-            # not a one-off — stay locked until a mod manually lifts it instead of
-            # auto-lifting into what might still be an active attack.
-            stay_locked = len(lockdown["trigger_timestamps"]) > 1
             if not stay_locked:
                 self._lockdown_tasks[guild.id] = asyncio.ensure_future(
                     self._auto_lift_after(guild.id, LOCKDOWN_MAX_DURATION_SECONDS)
@@ -543,7 +555,7 @@ class Watchdog(commands.Cog):
             self._lockdown_tasks.pop(guild.id, None)
             await self._send_lockdown_lifted_alert(guild, manual=manual, actor=actor)
 
-    async def _send_lockdown_alert(self, guild, reason, stay_locked, *, failed_count=0):
+    async def _send_lockdown_alert(self, guild, reason, stay_locked, *, failed_count=0, shadow=False):
         guild_conf = self._guild_conf(guild.id)
         log_channel_id = guild_conf["log_channel_id"]
         log_channel = guild.get_channel(log_channel_id) if log_channel_id else None
@@ -551,7 +563,12 @@ class Watchdog(commands.Cog):
             return
 
         description = reason
-        if stay_locked:
+        if shadow:
+            description += (
+                "\n\nIn active mode this would have started a guild-wide lockdown. "
+                "No channels were locked."
+            )
+        elif stay_locked:
             description += (
                 "\n\n⚠️ This is a repeat trigger within the last hour — staying locked "
                 "until manually lifted with `.watchdog unlock`."
@@ -566,8 +583,14 @@ class Watchdog(commands.Cog):
             )
 
         embed = discord.Embed(
-            title="🔒 Watchdog Lockdown Started", description=description,
-            color=discord.Color.dark_red(), timestamp=discord.utils.utcnow(),
+            title=(
+                "🔒 Watchdog Lockdown [SHADOW MODE — no action taken]"
+                if shadow
+                else "🔒 Watchdog Lockdown Started"
+            ),
+            description=description,
+            color=discord.Color.orange() if shadow else discord.Color.dark_red(),
+            timestamp=discord.utils.utcnow(),
         )
         try:
             await log_channel.send(embed=embed)
@@ -722,7 +745,11 @@ class Watchdog(commands.Cog):
                 if lockdown["expires_at"]
                 else None
             )
-            value = f"🔒 ACTIVE — {remaining}s remaining" if remaining is not None else "🔒 ACTIVE"
+            value = (
+                f"🔒 ACTIVE — {remaining}s remaining"
+                if remaining is not None
+                else "🔒 ACTIVE — until manually unlocked"
+            )
         else:
             value = "Not active"
         embed.add_field(name="Lockdown", value=value, inline=False)
