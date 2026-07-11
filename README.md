@@ -185,9 +185,6 @@ it stops the moment you disconnect. To keep it running on a server after an SSH 
    sudo systemctl status kurisu
    journalctl -u kurisu -f
    ```
-   This doesn't change what's logged — `logs/kurisu.log` keeps being written exactly as
-   before. `journalctl -u kurisu -f` is just the equivalent of watching the console live,
-   in addition to (not instead of) `tail -f logs/kurisu.log`.
 
 4. **Manual control:**
    ```bash
