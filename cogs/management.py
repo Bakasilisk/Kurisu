@@ -87,14 +87,16 @@ class Management(commands.Cog):
         return {name for name in _discover_cogs() if name != "management"}
 
     async def _apply_presence(self):
+        # change_presence needs a live gateway; calling it before the client is
+        # ready (e.g. cog_load during startup) raises AttributeError on the missing
+        # websocket. Skip here and let on_ready re-apply once connected.
+        if not self.bot.is_ready():
+            return
         text = self.config["global"]["presence"]
         activity = discord.Game(name=text) if text else None
-        # Safe if the client isn't fully connected yet (e.g. on cog_load during
-        # startup, before the gateway is ready) — change_presence just no-ops or
-        # raises, and either way a missed apply is picked up again in on_ready.
         try:
             await self.bot.change_presence(activity=activity)
-        except (discord.HTTPException, RuntimeError):
+        except discord.HTTPException:
             pass
 
     async def cog_load(self):
@@ -136,13 +138,13 @@ class Management(commands.Cog):
 
     @commands.group(name="cog", invoke_without_command=True)
     @commands.is_owner()
-    async def cog_group(self, ctx):
+    async def manage_cogs(self, ctx):
         """Manage loaded cogs."""
         await ctx.reply("Use `.cog list|load|unload|reload <name>`.")
 
-    @cog_group.command(name="list")
+    @manage_cogs.command(name="list")
     @commands.is_owner()
-    async def cog_list(self, ctx):
+    async def list_cogs(self, ctx):
         """List every known cog and its loaded/disabled state."""
         disabled = set(self.config["global"]["disabled_extensions"])
         lines = []
@@ -156,9 +158,9 @@ class Management(commands.Cog):
             lines.append(f"`{short}` — {status}")
         await ctx.reply("\n".join(lines) or "No cogs found.")
 
-    @cog_group.command(name="load")
+    @manage_cogs.command(name="load")
     @commands.is_owner()
-    async def cog_load_cmd(self, ctx, name: str):
+    async def load_cog(self, ctx, name: str):
         """Load a cog by name."""
         ext = _to_extension(name)
         await self.bot.load_extension(ext)
@@ -168,9 +170,9 @@ class Management(commands.Cog):
             self._save()
         await ctx.reply(f"✅ Loaded `{_to_short_name(name)}`.")
 
-    @cog_group.command(name="unload")
+    @manage_cogs.command(name="unload")
     @commands.is_owner()
-    async def cog_unload_cmd(self, ctx, name: str):
+    async def unload_cog(self, ctx, name: str):
         """Unload a cog by name."""
         if _to_short_name(name) == "management":
             await ctx.reply("Refusing to unload the management cog — that would lock you out.")
@@ -183,9 +185,9 @@ class Management(commands.Cog):
             self._save()
         await ctx.reply(f"✅ Unloaded `{_to_short_name(name)}`.")
 
-    @cog_group.command(name="reload")
+    @manage_cogs.command(name="reload")
     @commands.is_owner()
-    async def cog_reload_cmd(self, ctx, name: str):
+    async def reload_cog(self, ctx, name: str):
         """Reload a cog by name."""
         ext = _to_extension(name)
         await self.bot.reload_extension(ext)
