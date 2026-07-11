@@ -73,6 +73,16 @@ class Moderation(commands.Cog):
         return ctx.guild is None or cog_enabled(self.bot, ctx.guild.id, "moderation")
 
     @staticmethod
+    def _hierarchy_error(ctx, member, verb: str) -> str | None:
+        """Return an error string if the actor or the bot can't act on `member`
+        by role hierarchy, else None. The guild owner bypasses the actor check."""
+        if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+            return f"You can't {verb} someone with an equal or higher role than you."
+        if member.top_role >= ctx.guild.me.top_role:
+            return f"My role isn't high enough to {verb} that member."
+        return None
+
+    @staticmethod
     async def _reply(ctx, *args, **kwargs):
         """ctx.reply, but ephemeral (visible only to the invoker) when the
         command was invoked via / rather than the text prefix."""
@@ -174,8 +184,9 @@ class Moderation(commands.Cog):
     @commands.guild_only()
     async def kick(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         """Kick a member from the server."""
-        if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
-            await self._reply(ctx, "You can't kick someone with an equal or higher role than you.")
+        error = self._hierarchy_error(ctx, member, "kick")
+        if error:
+            await self._reply(ctx, error)
             return
         await member.kick(reason=f"{ctx.author}: {reason}")
         await self._reply(ctx, f"👢 Kicked {member.mention} — {reason}")
@@ -187,10 +198,11 @@ class Moderation(commands.Cog):
     @commands.guild_only()
     async def ban(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         """Ban a member from the server."""
-        if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
-            await self._reply(ctx, "You can't ban someone with an equal or higher role than you.")
+        error = self._hierarchy_error(ctx, member, "ban")
+        if error:
+            await self._reply(ctx, error)
             return
-        await member.ban(reason=f"{ctx.author}: {reason}", delete_message_days=0)
+        await member.ban(reason=f"{ctx.author}: {reason}", delete_message_seconds=0)
         await self._reply(ctx, f"🔨 Banned {member.mention} — {reason}")
         await self._log_action(ctx, "Member Banned", discord.Color.red(), target=member, reason=reason)
 
@@ -212,8 +224,9 @@ class Moderation(commands.Cog):
         self, ctx, member: discord.Member, duration: str, *, reason: str = "No reason provided"
     ):
         """Time out a member for a given duration (e.g. 10m, 2h, 1d)."""
-        if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
-            await self._reply(ctx, "You can't time out someone with an equal or higher role than you.")
+        error = self._hierarchy_error(ctx, member, "time out")
+        if error:
+            await self._reply(ctx, error)
             return
         delta = parse_duration(duration)
         if delta > timedelta(days=28):
@@ -288,10 +301,6 @@ class Moderation(commands.Cog):
             )
         await self._reply(ctx, embed=embed)
 
-    @warnings_.error
-    async def warnings_error(self, ctx, error):
-        await self.cog_command_error(ctx, error)
-
     @commands.hybrid_command(description="Clear all warnings for a member.")
     @commands.has_permissions(moderate_members=True)
     @commands.guild_only()
@@ -313,7 +322,7 @@ class Moderation(commands.Cog):
     @commands.has_permissions(manage_messages=True)
     @commands.bot_has_permissions(manage_messages=True)
     @commands.guild_only()
-    async def purge(self, ctx, amount: int, member: discord.Member = None):
+    async def purge(self, ctx, amount: int, member: discord.Member | None = None):
         """Bulk-delete messages in the current channel, optionally filtered by member."""
         if not 1 <= amount <= 100:
             await self._reply(ctx, "Please choose an amount between 1 and 100.")
@@ -322,16 +331,24 @@ class Moderation(commands.Cog):
         def check(msg):
             return member is None or msg.author == member
 
-        deleted = await ctx.channel.purge(limit=amount + 1, check=check)
+        # Remove the invoking prefix message first (slash invocations have none), so it
+        # never counts against `amount` or the reported total regardless of the filter.
         ephemeral = ctx.interaction is not None
-        confirmation = await self._reply(ctx, f"🧹 Deleted {len(deleted) - 1} message(s).")
+        if not ephemeral:
+            try:
+                await ctx.message.delete()
+            except discord.NotFound:
+                pass
+
+        deleted = await ctx.channel.purge(limit=amount, check=check)
+        confirmation = await self._reply(ctx, f"🧹 Deleted {len(deleted)} message(s).")
         if not ephemeral:
             await confirmation.delete(delay=5)
         await self._log_action(
             ctx, "Messages Purged", discord.Color.blue(),
             **{
                 "Channel": ctx.channel.mention,
-                "Messages deleted": str(len(deleted) - 1),
+                "Messages deleted": str(len(deleted)),
                 "Filtered to": member.mention if member else "Everyone",
             },
         )
