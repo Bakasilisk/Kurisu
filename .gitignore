@@ -26,6 +26,9 @@ __pycache__/
 *.pyo
 *.pyd
 
+# Claude Code
+CLAUDE.md
+
 # OS metadata
 .DS_Store
 Thumbs.db
