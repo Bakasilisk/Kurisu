@@ -51,10 +51,11 @@ intents.message_content = True
 # detection) — must also be enabled under Privileged Gateway Intents in the Developer Portal.
 intents.members = True
 
-bot = commands.Bot(command_prefix=".", intents=intents)
+bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
 
 INITIAL_EXTENSIONS = [
     "cogs.management",
+    "cogs.help",
     "cogs.triggers",
     "cogs.moderation",
     "cogs.leveling",

@@ -84,7 +84,7 @@ class Management(commands.Cog):
         return cog_key not in guild_conf.get("disabled_cogs", [])
 
     def _toggleable_names(self) -> set[str]:
-        return {name for name in _discover_cogs() if name != "management"}
+        return {name for name in _discover_cogs() if name not in ("management", "help")}
 
     @staticmethod
     async def _reply(ctx, *args, **kwargs):

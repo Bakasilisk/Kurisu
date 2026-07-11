@@ -66,6 +66,9 @@ lockdown state, so a restart mid-lockdown resumes correctly) is persisted to `wa
 Known v1 limitations: webhook messages are safely ignored rather than acted upon (a webhook
 can't be timed out); detection thresholds are fixed constants, not yet per-server tunable.
 
+**Help** — `.help`/`/help` lists every command you can currently use, grouped by cog, with a
+one-line description each. Slash replies are ephemeral; `.` replies are public.
+
 **Management** — bot administration from Discord, available as both `.` prefix and `/` slash
 commands; slash invocations reply ephemerally (visible only to you). Owner-only (bot owner
 account): `cog list/load/unload/reload <name>`, `reloadall`, `sync`, `guilds`, `leave
