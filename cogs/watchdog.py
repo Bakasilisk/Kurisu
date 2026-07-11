@@ -203,7 +203,7 @@ class Watchdog(commands.Cog):
         # Deliberately NOT cancelling self._lockdown_tasks here: an in-flight
         # auto-lift only restores channel permissions and doesn't depend on this
         # cog instance's lifecycle, so letting it run to completion is safer than
-        # abandoning an active lockdown on a bare `!reload watchdog`.
+        # abandoning an active lockdown on a bare `.reload watchdog`.
 
     def _save_config(self):
         save_json_atomic(WATCHDOG_FILE, self.config)
@@ -549,11 +549,11 @@ class Watchdog(commands.Cog):
         if stay_locked:
             description += (
                 "\n\n⚠️ This is a repeat trigger within the last hour — staying locked "
-                "until manually lifted with `!watchdog unlock`."
+                "until manually lifted with `.watchdog unlock`."
             )
         else:
             minutes = LOCKDOWN_MAX_DURATION_SECONDS // 60
-            description += f"\n\nAuto-lifts in {minutes} minutes, or use `!watchdog unlock`."
+            description += f"\n\nAuto-lifts in {minutes} minutes, or use `.watchdog unlock`."
         if failed_count:
             description += (
                 f"\n\n⚠️ Failed to lock {failed_count} channel(s) — check the bot's "

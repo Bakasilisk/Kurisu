@@ -9,17 +9,20 @@ A simple, lightweight Discord bot written in Python using `discord.py`. Requires
 - Replies whenever anyone says "kurisutina" (case-insensitive): _Hör auf mich_ **_Kurisutina_** _zu nennen!_
 - Replies whenever anyone says "horny" (case-insensitive): "`@user` ist Horny!"
 
-**Moderation** (prefix `!`): `kick`, `ban`, `unban`, `timeout`/`mute`, `untimeout`/`unmute`,
+**Moderation** (prefix `.`, and also available as `/` slash commands with autocomplete
+descriptions): `kick`, `ban`, `unban`, `timeout`/`mute`, `untimeout`/`unmute`,
 `warn`, `warnings`/`warnlist`, `clearwarnings`, `purge`/`clear`, `slowmode`, `lock`, `unlock`.
 Each requires the relevant Discord permission (e.g. `Kick Members`, `Ban Members`,
 `Moderate Members`, `Manage Messages`, `Manage Channels`) on both the caller and the bot,
 and enforces role-hierarchy checks so members can't act on others with an equal or higher role.
-`lock`/`unlock` snapshot each channel's exact pre-lock permission state (persisted to
-`channel_locks.json`) so unlocking always restores what was there before, rather than
-blindly resetting it. Warnings are persisted to `warnings.json` in the project root.
-Every action above is optionally logged as an embed to a mod-log channel — configure it
-with `modlog set #channel`, check it with `modlog`, and turn it off with `modlog disable`
-(all three require `Manage Server`). The configured channel is persisted to `mod_log.json`.
+Slash (`/`) invocations reply ephemerally (visible only to the moderator); `.` invocations
+reply publicly as before — either way, every action is recorded to `logs/kurisu.log` and to
+the mod-log channel if one is configured. `lock`/`unlock` snapshot each channel's exact
+pre-lock permission state (persisted to `channel_locks.json`) so unlocking always restores
+what was there before, rather than blindly resetting it. Warnings are persisted to
+`warnings.json` in the project root. Configure the mod-log channel with `modlog set #channel`,
+check it with `modlog`, and turn it off with `modlog disable` (all three require
+`Manage Server`). The configured channel is persisted to `mod_log.json`.
 
 **Leveling** — members earn 15-25 XP per message (60s cooldown to prevent spam farming),
 with an announcement on level-up. Commands: `rank`/`level [member]` to view level/XP/server
@@ -28,7 +31,7 @@ rank, `leaderboard`/`lb`/`top [count]` for the server's top members, and `resetx
 
 **Watchdog** — automated detection of raid/spam behavior, reacting faster than a human mod
 can (or when none are online). Ships **in shadow mode by default**: it detects and alerts,
-but takes no action until a mod runs `!watchdog mode active`. Detects:
+but takes no action until a mod runs `.watchdog mode active`. Detects:
 - **Pattern A (sleeper raid/scam bursts):** an account posting in 4+ distinct channels within
   20 seconds while mentioning a role above a member-count threshold (auto-detected as
   "high-value" — no manual role list to maintain; `@everyone`/`@here` always counts).
@@ -44,7 +47,7 @@ independently trip Pattern A, or 3+ post duplicate content, within 60 seconds of
 watchdog also triggers a temporary **lockdown**: `@everyone` loses send permission in every
 text channel (any configured protected role(s) keep it), auto-lifting after 15 minutes unless
 it's a repeat trigger within the last hour, in which case it stays locked until a mod runs
-`!watchdog unlock`. Every channel's exact pre-lockdown permission state is snapshotted first
+`.watchdog unlock`. Every channel's exact pre-lockdown permission state is snapshotted first
 and restored exactly on lift.
 
 Commands (all require `Manage Server`): `watchdog`/`watchdog status`, `watchdog mode
@@ -85,7 +88,8 @@ All persisted data files (`warnings.json`, `channel_locks.json`, `mod_log.json`,
 
 3. **Invite the Bot to your Server:**
    - In the Developer Portal, go to **OAuth2** -> **URL Generator**.
-   - Under **Scopes**, select `bot`.
+   - Under **Scopes**, select `bot` and `applications.commands` (the latter is required for
+     the moderation cog's `/` slash commands to register).
    - Under **Bot Permissions**, select:
      - `Read Messages/View Channels`
      - `Send Messages`
