@@ -86,6 +86,13 @@ class Management(commands.Cog):
     def _toggleable_names(self) -> set[str]:
         return {name for name in _discover_cogs() if name != "management"}
 
+    @staticmethod
+    async def _reply(ctx, *args, **kwargs):
+        """ctx.reply, but ephemeral (visible only to the invoker) when the command
+        was invoked via / rather than the text prefix — mirrors Moderation._reply."""
+        kwargs.setdefault("ephemeral", ctx.interaction is not None)
+        return await ctx.reply(*args, **kwargs)
+
     async def _apply_presence(self):
         # change_presence needs a live gateway; calling it before the client is
         # ready (e.g. cog_load during startup) raises AttributeError on the missing
@@ -112,37 +119,40 @@ class Management(commands.Cog):
         if isinstance(error, commands.CommandInvokeError):
             original = error.original
             if isinstance(original, commands.ExtensionNotFound):
-                await ctx.reply("I couldn't find a cog by that name.")
+                await self._reply(ctx, "I couldn't find a cog by that name.")
                 return
             elif isinstance(original, commands.ExtensionAlreadyLoaded):
-                await ctx.reply("That cog is already loaded.")
+                await self._reply(ctx, "That cog is already loaded.")
                 return
             elif isinstance(original, commands.ExtensionNotLoaded):
-                await ctx.reply("That cog isn't loaded.")
+                await self._reply(ctx, "That cog isn't loaded.")
                 return
             elif isinstance(original, commands.ExtensionError):
-                await ctx.reply(f"Couldn't do that: {original}")
+                await self._reply(ctx, f"Couldn't do that: {original}")
                 return
         if isinstance(error, commands.NotOwner):
-            await ctx.reply("Only the bot owner can do that.")
+            await self._reply(ctx, "Only the bot owner can do that.")
         elif isinstance(error, commands.MissingPermissions):
-            await ctx.reply("You don't have permission to do that.")
+            await self._reply(ctx, "You don't have permission to do that.")
         elif isinstance(error, commands.BotMissingPermissions):
-            await ctx.reply("I don't have permission to do that.")
+            await self._reply(ctx, "I don't have permission to do that.")
         elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
-            await ctx.reply(str(error) or "Invalid or missing argument.")
+            await self._reply(ctx, str(error) or "Invalid or missing argument.")
         else:
             raise error
 
     # --- Owner-only: cog control -------------------------------------------------
 
-    @commands.group(name="cog", invoke_without_command=True)
+    @commands.hybrid_group(
+        name="cog", invoke_without_command=True, fallback="help",
+        description="Manage loaded cogs (owner only).",
+    )
     @commands.is_owner()
     async def manage_cogs(self, ctx):
         """Manage loaded cogs."""
-        await ctx.reply("Use `.cog list|load|unload|reload <name>`.")
+        await self._reply(ctx, "Use `.cog list|load|unload|reload <name>` (or `/cog …`).")
 
-    @manage_cogs.command(name="list")
+    @manage_cogs.command(name="list", description="List every known cog and its state.")
     @commands.is_owner()
     async def list_cogs(self, ctx):
         """List every known cog and its loaded/disabled state."""
@@ -156,9 +166,9 @@ class Management(commands.Cog):
             else:
                 status = "⚪ unloaded"
             lines.append(f"`{short}` — {status}")
-        await ctx.reply("\n".join(lines) or "No cogs found.")
+        await self._reply(ctx, "\n".join(lines) or "No cogs found.")
 
-    @manage_cogs.command(name="load")
+    @manage_cogs.command(name="load", description="Load a cog by name.")
     @commands.is_owner()
     async def load_cog(self, ctx, name: str):
         """Load a cog by name."""
@@ -168,14 +178,14 @@ class Management(commands.Cog):
         if ext in disabled:
             disabled.remove(ext)
             self._save()
-        await ctx.reply(f"✅ Loaded `{_to_short_name(name)}`.")
+        await self._reply(ctx, f"✅ Loaded `{_to_short_name(name)}`.")
 
-    @manage_cogs.command(name="unload")
+    @manage_cogs.command(name="unload", description="Unload a cog by name.")
     @commands.is_owner()
     async def unload_cog(self, ctx, name: str):
         """Unload a cog by name."""
         if _to_short_name(name) == "management":
-            await ctx.reply("Refusing to unload the management cog — that would lock you out.")
+            await self._reply(ctx, "Refusing to unload the management cog — that would lock you out.")
             return
         ext = _to_extension(name)
         await self.bot.unload_extension(ext)
@@ -183,17 +193,17 @@ class Management(commands.Cog):
         if ext not in disabled:
             disabled.append(ext)
             self._save()
-        await ctx.reply(f"✅ Unloaded `{_to_short_name(name)}`.")
+        await self._reply(ctx, f"✅ Unloaded `{_to_short_name(name)}`.")
 
-    @manage_cogs.command(name="reload")
+    @manage_cogs.command(name="reload", description="Reload a cog by name.")
     @commands.is_owner()
     async def reload_cog(self, ctx, name: str):
         """Reload a cog by name."""
         ext = _to_extension(name)
         await self.bot.reload_extension(ext)
-        await ctx.reply(f"🔁 Reloaded `{_to_short_name(name)}`.")
+        await self._reply(ctx, f"🔁 Reloaded `{_to_short_name(name)}`.")
 
-    @commands.command(name="reloadall")
+    @commands.hybrid_command(name="reloadall", description="Reload every loaded cog.")
     @commands.is_owner()
     async def reloadall(self, ctx):
         """Reload every currently-loaded extension."""
@@ -204,18 +214,18 @@ class Management(commands.Cog):
             except commands.ExtensionError as e:
                 failures.append(f"`{ext}`: {e}")
         if failures:
-            await ctx.reply("Reloaded with errors:\n" + "\n".join(failures))
+            await self._reply(ctx, "Reloaded with errors:\n" + "\n".join(failures))
         else:
-            await ctx.reply(f"🔁 Reloaded {len(self.bot.extensions)} extension(s).")
+            await self._reply(ctx, f"🔁 Reloaded {len(self.bot.extensions)} extension(s).")
 
-    @commands.command(name="sync")
+    @commands.hybrid_command(name="sync", description="Re-sync slash commands with Discord.")
     @commands.is_owner()
     async def sync(self, ctx):
         """Re-sync slash commands with Discord."""
         synced = await self.bot.tree.sync()
-        await ctx.reply(f"🔄 Synced {len(synced)} slash command(s).")
+        await self._reply(ctx, f"🔄 Synced {len(synced)} slash command(s).")
 
-    @commands.command(name="guilds")
+    @commands.hybrid_command(name="guilds", description="List the servers the bot is in.")
     @commands.is_owner()
     async def guilds_cmd(self, ctx):
         """List every guild the bot is in."""
@@ -223,21 +233,33 @@ class Management(commands.Cog):
             f"{guild.name} (`{guild.id}`) — {guild.member_count} members"
             for guild in self.bot.guilds
         ]
-        await ctx.reply("\n".join(lines) or "Not in any guilds.")
+        await self._reply(ctx, "\n".join(lines) or "Not in any guilds.")
 
-    @commands.command(name="leave")
+    @commands.hybrid_command(name="leave", description="Leave this server, or another by ID.")
     @commands.is_owner()
-    async def leave(self, ctx, guild_id: int):
-        """Leave a guild by ID (no accidental current-guild leave)."""
-        guild = self.bot.get_guild(guild_id)
-        if guild is None:
-            await ctx.reply("I'm not in a guild with that ID.")
-            return
-        name = guild.name
+    async def leave(self, ctx, guild_id: str = None):
+        """Leave a guild — the current one if no ID is given, otherwise the one with the
+        given ID. ID is a string because guild snowflakes exceed the slash int range."""
+        if guild_id is None:
+            guild = ctx.guild
+            if guild is None:
+                await self._reply(ctx, "There's no current server here — give a guild ID to leave.")
+                return
+        else:
+            try:
+                gid = int(guild_id)
+            except ValueError:
+                await self._reply(ctx, "That doesn't look like a valid guild ID.")
+                return
+            guild = self.bot.get_guild(gid)
+            if guild is None:
+                await self._reply(ctx, "I'm not in a guild with that ID.")
+                return
+        # Reply before leaving: a prefix reply can't be posted once we've left the channel.
+        await self._reply(ctx, f"👋 Leaving **{guild.name}** (`{guild.id}`).")
         await guild.leave()
-        await ctx.reply(f"👋 Left **{name}** (`{guild_id}`).")
 
-    @commands.command(name="presence")
+    @commands.hybrid_command(name="presence", description="Set or clear the bot's status text.")
     @commands.is_owner()
     async def presence(self, ctx, *, text: str = None):
         """Set the bot's "Playing ..." status, persisted across restarts.
@@ -246,30 +268,33 @@ class Management(commands.Cog):
             self.config["global"]["presence"] = None
             self._save()
             await self._apply_presence()
-            await ctx.reply("🎮 Presence cleared.")
+            await self._reply(ctx, "🎮 Presence cleared.")
             return
         self.config["global"]["presence"] = text
         self._save()
         await self._apply_presence()
-        await ctx.reply(f"🎮 Presence set to: Playing {text}")
+        await self._reply(ctx, f"🎮 Presence set to: Playing {text}")
 
-    @commands.command(name="shutdown")
+    @commands.hybrid_command(name="shutdown", description="Shut the bot down.")
     @commands.is_owner()
     async def shutdown(self, ctx):
         """Shut the bot down."""
-        await ctx.reply("🛑 Shutting down.")
+        await self._reply(ctx, "🛑 Shutting down.")
         await self.bot.close()
 
     # --- Server-admin: per-guild feature toggles ----------------------------------
 
-    @commands.group(name="feature", invoke_without_command=True)
+    @commands.hybrid_group(
+        name="feature", invoke_without_command=True, fallback="help",
+        description="Enable/disable a cog's behavior in this server.",
+    )
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
     async def feature(self, ctx):
         """Manage which cogs' behavior is enabled in this server."""
-        await ctx.reply("Use `.feature list|enable|disable <name>`.")
+        await self._reply(ctx, "Use `.feature list|enable|disable <name>` (or `/feature …`).")
 
-    @feature.command(name="list")
+    @feature.command(name="list", description="Show each cog's state in this server.")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
     async def feature_list(self, ctx):
@@ -280,35 +305,35 @@ class Management(commands.Cog):
             f"`{name}` — {'🔴 disabled' if name in disabled else '🟢 enabled'}"
             for name in sorted(self._toggleable_names())
         ]
-        await ctx.reply("\n".join(lines) or "No toggleable features found.")
+        await self._reply(ctx, "\n".join(lines) or "No toggleable features found.")
 
-    @feature.command(name="enable")
+    @feature.command(name="enable", description="Enable a cog's behavior in this server.")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
     async def feature_enable(self, ctx, name: str):
         """Enable a cog's behavior in this server."""
         if name not in self._toggleable_names():
-            await ctx.reply(f"`{name}` isn't a toggleable feature.")
+            await self._reply(ctx, f"`{name}` isn't a toggleable feature.")
             return
         guild_conf = self._guild_conf(ctx.guild.id)
         if name in guild_conf["disabled_cogs"]:
             guild_conf["disabled_cogs"].remove(name)
             self._save()
-        await ctx.reply(f"✅ `{name}` is now enabled in this server.")
+        await self._reply(ctx, f"✅ `{name}` is now enabled in this server.")
 
-    @feature.command(name="disable")
+    @feature.command(name="disable", description="Disable a cog's behavior in this server.")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
     async def feature_disable(self, ctx, name: str):
         """Disable a cog's behavior in this server."""
         if name not in self._toggleable_names():
-            await ctx.reply(f"`{name}` isn't a toggleable feature.")
+            await self._reply(ctx, f"`{name}` isn't a toggleable feature.")
             return
         guild_conf = self._guild_conf(ctx.guild.id)
         if name not in guild_conf["disabled_cogs"]:
             guild_conf["disabled_cogs"].append(name)
             self._save()
-        await ctx.reply(f"🚫 `{name}` is now disabled in this server.")
+        await self._reply(ctx, f"🚫 `{name}` is now disabled in this server.")
 
 
 async def setup(bot):

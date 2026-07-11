@@ -58,10 +58,12 @@ lockdown state, so a restart mid-lockdown resumes correctly) is persisted to `wa
 Known v1 limitations: webhook messages are safely ignored rather than acted upon (a webhook
 can't be timed out); detection thresholds are fixed constants, not yet per-server tunable.
 
-**Management** — bot administration from Discord. Owner-only (bot owner account):
-`cog list/load/unload/reload <name>`, `reloadall`, `sync`, `guilds`, `leave <guild_id>`,
-`presence <text>`, `shutdown`. Server admins (`Manage Server`): `feature list/enable/disable
-<name>` to soft-disable a cog's behavior in their own guild only. Both levels persist to
+**Management** — bot administration from Discord, available as both `.` prefix and `/` slash
+commands; slash invocations reply ephemerally (visible only to you). Owner-only (bot owner
+account): `cog list/load/unload/reload <name>`, `reloadall`, `sync`, `guilds`, `leave
+[guild_id]` (leaves the current server when no ID is given), `presence [text]` (no text
+clears it), `shutdown`. Server admins (`Manage Server`): `feature list/enable/disable <name>`
+to soft-disable a cog's behavior in their own guild only. Both levels persist to
 `management.json`.
 
 The bot loads each cog independently at startup — if one fails to load, the failure is
