@@ -128,3 +128,5 @@ needed.
      ```bash
      python bot.py
      ```
+   - Or use the bundled `./runbot.sh`, which does the venv setup, dependency install, and
+     launch in one step.
