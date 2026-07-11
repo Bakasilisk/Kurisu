@@ -56,28 +56,28 @@ class Verification(commands.Cog):
         await ctx.reply(
             f"Granter role: {granter.mention if granter else 'Not set'}\n"
             f"Role granted: {target.mention if target else 'Not set'}\n"
-            f"Members with the granter role can run `!verify @member`."
+            f"Members with the granter role can run `.verify @member`."
         )
 
     @verification.command(name="granter")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
     async def verification_granter(self, ctx, role: discord.Role):
-        """Set the role someone must hold to use !verify."""
+        """Set the role someone must hold to use .verify."""
         guild_conf = self._guild_conf(ctx.guild.id)
         guild_conf["granter_role_id"] = role.id
         self._save_config()
-        await ctx.reply(f"✅ {role.mention} can now use `!verify`.")
+        await ctx.reply(f"✅ {role.mention} can now use `.verify`.")
 
     @verification.command(name="target")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
     async def verification_target(self, ctx, role: discord.Role):
-        """Set the role !verify assigns to its target."""
+        """Set the role .verify assigns to its target."""
         guild_conf = self._guild_conf(ctx.guild.id)
         guild_conf["target_role_id"] = role.id
         self._save_config()
-        await ctx.reply(f"✅ `!verify` now grants {role.mention}.")
+        await ctx.reply(f"✅ `.verify` now grants {role.mention}.")
 
     @commands.command()
     @commands.guild_only()
@@ -89,7 +89,7 @@ class Verification(commands.Cog):
         target_role_id = guild_conf["target_role_id"]
 
         if not granter_role_id or not target_role_id:
-            await ctx.reply("Verification isn't configured yet — ask a mod to run `!verification`.")
+            await ctx.reply("Verification isn't configured yet — ask a mod to run `.verification`.")
             return
         if not any(role.id == granter_role_id for role in ctx.author.roles):
             await ctx.reply("You don't have permission to do that.")
@@ -99,7 +99,7 @@ class Verification(commands.Cog):
         if target_role is None:
             await ctx.reply(
                 "The configured role no longer exists — ask a mod to set a new one with "
-                "`!verification target`."
+                "`.verification target`."
             )
             return
         if target_role in member.roles:
@@ -109,7 +109,7 @@ class Verification(commands.Cog):
             await ctx.reply("I can't assign a role that's equal to or higher than my own top role.")
             return
 
-        await member.add_roles(target_role, reason=f"Granted by {ctx.author} via !verify")
+        await member.add_roles(target_role, reason=f"Granted by {ctx.author} via .verify")
         await ctx.reply(f"✅ Gave {member.mention} the {target_role.mention} role.")
 
 

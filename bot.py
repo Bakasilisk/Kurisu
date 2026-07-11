@@ -49,7 +49,7 @@ intents.message_content = True
 # detection) — must also be enabled under Privileged Gateway Intents in the Developer Portal.
 intents.members = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix=".", intents=intents)
 
 INITIAL_EXTENSIONS = [
     "cogs.triggers",
@@ -59,10 +59,20 @@ INITIAL_EXTENSIONS = [
     "cogs.verification",
 ]
 
+_synced = False
+
 
 @bot.event
 async def on_ready():
+    global _synced
     logger.info("Logged in as %s (ID: %s)", bot.user.name, bot.user.id)
+    if not _synced:
+        try:
+            synced = await bot.tree.sync()
+            logger.info("Synced %d slash command(s).", len(synced))
+        except discord.HTTPException:
+            logger.exception("Failed to sync slash commands.")
+        _synced = True
 
 
 async def main():
