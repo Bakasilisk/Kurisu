@@ -2,10 +2,25 @@ from discord.ext import commands
 
 from .management import cog_enabled
 
+FUSSE_TARGET_USER_ID = 1058738968339955782
+
 
 class Triggers(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    async def cog_check(self, ctx):
+        return ctx.guild is None or cog_enabled(self.bot, ctx.guild.id, "triggers")
+
+    async def cog_command_error(self, ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            return
+        raise error
+
+    @commands.command(name="füße")
+    async def fusse(self, ctx):
+        """Mention a specific user."""
+        await ctx.reply(f"<@{FUSSE_TARGET_USER_ID}>")
 
     @commands.Cog.listener()
     async def on_message(self, message):
