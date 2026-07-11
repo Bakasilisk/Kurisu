@@ -120,7 +120,7 @@ class Palantir(commands.Cog):
         me = guild.me
         return me is not None and me.guild_permissions.manage_guild
 
-    async def _resolve_message_deleter(self, message: discord.Message):
+    async def _resolve_message_deleter(self, guild: discord.Guild, author_id: int | None, channel_id: int):
         """Best-effort: identify which moderator deleted someone else's message
         via the audit log. Returns None for self-deletions (Discord logs no
         audit entry for those) or when the bot lacks View Audit Log. Discord
@@ -128,9 +128,7 @@ class Palantir(commands.Cog):
         a single entry with an incrementing `count`, so a bump in that count —
         or a brand-new, just-created entry — is what marks a fresh moderator
         deletion, rather than an unchanged stale entry from an earlier purge."""
-        guild = message.guild
-        author = message.author
-        if author is None or not self._has_audit_log_access(guild):
+        if author_id is None or not self._has_audit_log_access(guild):
             return None
         try:
             entries = [
@@ -144,10 +142,10 @@ class Palantir(commands.Cog):
 
         match = None
         for entry in entries:
-            if entry.target is None or entry.target.id != author.id:
+            if entry.target is None or entry.target.id != author_id:
                 continue
             extra_channel = getattr(entry.extra, "channel", None)
-            if extra_channel is not None and extra_channel.id != message.channel.id:
+            if extra_channel is not None and extra_channel.id != channel_id:
                 continue
             match = entry
             break
@@ -200,6 +198,16 @@ class Palantir(commands.Cog):
 
     def _cache_get(self, guild_id: int, message_id: int) -> dict | None:
         return self.messages.get(str(guild_id), {}).get(str(message_id))
+
+    async def _update_cached_content(self, guild_id: int, message_id: int, content: str) -> None:
+        """Refresh the stored content of an already-cached message after an edit,
+        so a later delete shows the most recent version. No-op if the message was
+        never cached (e.g. it predates the cache or fell out of it)."""
+        async with self._cache_lock:
+            entry = self.messages.get(str(guild_id), {}).get(str(message_id))
+            if entry is not None:
+                entry["content"] = content
+                self._messages_dirty = True
 
     async def _cache_message(self, message: discord.Message) -> None:
         entry = {
@@ -428,62 +436,93 @@ class Palantir(commands.Cog):
         await self._archive_attachments(message)
 
     @commands.Cog.listener()
-    async def on_message_edit(self, before: discord.Message, after: discord.Message) -> None:
-        guild = after.guild
-        if guild is None or after.author.bot:
+    async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent) -> None:
+        """Raw event so edits of messages no longer in discord.py's connection
+        cache are still logged, falling back to palantir's own cache for the
+        pre-edit content."""
+        if payload.guild_id is None:
             return
-        if not self._should_log(guild, "messages"):
+        guild = self.bot.get_guild(payload.guild_id)
+        if guild is None or not self._should_log(guild, "messages"):
             return
-        if self._is_log_channel(guild, after.channel.id):
+        if self._is_log_channel(guild, payload.channel_id):
             return
 
-        cached = self._cache_get(guild.id, after.id)
-        before_content = before.content or (cached.get("content") if cached else None)
-        # Refresh the cache regardless, so a later delete has the latest content
-        # — but skip posting a log embed for embed-only edits (e.g. a link
-        # unfurl), which fire on_message_edit without any real content change.
-        if (before_content or "") == (after.content or ""):
-            await self._cache_message(after)
+        author_data = payload.data.get("author") or {}
+        if author_data.get("bot"):
             return
-        await self._cache_message(after)
+        after_content = payload.data.get("content")
+        if after_content is None:
+            # MESSAGE_UPDATE with no content field is an embed-only change (e.g.
+            # a link unfurl or a pin flag) — nothing to log.
+            return
+
+        cached_msg = payload.cached_message
+        cached = self._cache_get(guild.id, payload.message_id)
+        before_content = (cached_msg.content if cached_msg else None) or (
+            cached.get("content") if cached else None
+        )
+        # Refresh the stored content regardless, so a later delete shows the
+        # latest version — then skip the embed if nothing actually changed.
+        await self._update_cached_content(guild.id, payload.message_id, after_content)
+        if (before_content or "") == (after_content or ""):
+            return
+
+        author = cached_msg.author if cached_msg else None
+        if author is None and author_data.get("id"):
+            author = guild.get_member(int(author_data["id"]))
+        if author is not None:
+            author_label = f"{author.mention} ({author})"
+        elif author_data.get("id"):
+            author_label = f"<@{author_data['id']}>"
+        else:
+            author_label = "Unknown"
 
         embed = discord.Embed(
             title="✏️ Message Edited", color=CATEGORY_COLORS["messages"], timestamp=discord.utils.utcnow()
         )
-        embed.add_field(name="Author", value=f"{after.author.mention} ({after.author})", inline=False)
-        embed.add_field(name="Channel", value=after.channel.mention, inline=False)
+        embed.add_field(name="Author", value=author_label, inline=False)
+        embed.add_field(name="Channel", value=f"<#{payload.channel_id}>", inline=False)
         embed.add_field(
             name="Before", value=(before_content or "*Unknown (not cached)*")[:1024], inline=False
         )
-        embed.add_field(name="After", value=(after.content or "*Empty*")[:1024], inline=False)
-        embed.add_field(name="Jump", value=f"[Link]({after.jump_url})", inline=False)
+        embed.add_field(name="After", value=(after_content or "*Empty*")[:1024], inline=False)
+        jump = f"https://discord.com/channels/{guild.id}/{payload.channel_id}/{payload.message_id}"
+        embed.add_field(name="Jump", value=f"[Link]({jump})", inline=False)
         await self._log(guild, "messages", embed)
 
     @commands.Cog.listener()
-    async def on_message_delete(self, message: discord.Message) -> None:
-        guild = message.guild
-        if guild is None:
+    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
+        """Raw event so deletions of messages no longer in discord.py's
+        connection cache are still logged — from palantir's own cache and its
+        archived attachments, which are keyed by message id regardless of cache."""
+        if payload.guild_id is None:
             return
-        if not self._should_log(guild, "messages"):
+        guild = self.bot.get_guild(payload.guild_id)
+        if guild is None or not self._should_log(guild, "messages"):
             return
-        if self._is_log_channel(guild, message.channel.id):
+        if self._is_log_channel(guild, payload.channel_id):
             # Still drop any cache entry so it doesn't linger forever, but don't
             # log — avoids a feedback loop logging deletions of our own embeds.
-            await self._drop_cache_entry(guild.id, message.id)
+            await self._drop_cache_entry(guild.id, payload.message_id)
             return
 
-        cached = self._cache_get(guild.id, message.id)
-        author = message.author
-        if author is None and cached:
-            author = guild.get_member(cached.get("author_id"))
-        content = message.content or (cached.get("content") if cached else None)
-        attachment_urls = [a.url for a in message.attachments] or (
-            cached.get("attachment_urls", []) if cached else []
+        cached_msg = payload.cached_message
+        cached = self._cache_get(guild.id, payload.message_id)
+        author = cached_msg.author if cached_msg else None
+        author_id = author.id if author is not None else (cached.get("author_id") if cached else None)
+        if author is None and author_id is not None:
+            author = guild.get_member(author_id)
+        content = (cached_msg.content if cached_msg else None) or (cached.get("content") if cached else None)
+        attachment_urls = (
+            [a.url for a in cached_msg.attachments]
+            if cached_msg and cached_msg.attachments
+            else (cached.get("attachment_urls", []) if cached else [])
         )
 
         guild_conf = self._guild_conf(guild.id)
         files = (
-            self._load_archived_attachments(guild.id, message.id)
+            self._load_archived_attachments(guild.id, payload.message_id)
             if guild_conf["archive_attachments"]
             else []
         )
@@ -493,17 +532,19 @@ class Palantir(commands.Cog):
         )
         if author is not None:
             embed.add_field(name="Author", value=f"{author.mention} ({author})", inline=False)
-        elif cached:
-            embed.add_field(name="Author", value=f"Unknown (ID: {cached.get('author_id')})", inline=False)
-        embed.add_field(name="Channel", value=f"<#{message.channel.id}>", inline=False)
+        elif author_id is not None:
+            embed.add_field(name="Author", value=f"Unknown (ID: {author_id})", inline=False)
+        embed.add_field(name="Channel", value=f"<#{payload.channel_id}>", inline=False)
 
-        deleter = await self._resolve_message_deleter(message)
+        deleter = await self._resolve_message_deleter(guild, author_id, payload.channel_id)
         if deleter is not None:
             deleted_by = f"{deleter.mention} ({deleter})"
         elif not self._has_audit_log_access(guild):
             deleted_by = "Unknown (bot lacks View Audit Log)"
         elif author is not None:
             deleted_by = f"{author.mention} (self-deleted)"
+        elif author_id is not None:
+            deleted_by = f"<@{author_id}> (self-deleted)"
         else:
             deleted_by = "Self-deleted or unknown"
         embed.add_field(name="Deleted by", value=deleted_by, inline=False)
@@ -515,48 +556,59 @@ class Palantir(commands.Cog):
             embed.add_field(name="Attachments", value="\n".join(attachment_urls)[:1024], inline=False)
 
         await self._log(guild, "messages", embed, files=files or None)
-        await self._drop_cache_entry(guild.id, message.id)
+        await self._drop_cache_entry(guild.id, payload.message_id)
 
     @commands.Cog.listener()
-    async def on_bulk_message_delete(self, messages: list[discord.Message]) -> None:
-        if not messages:
+    async def on_raw_bulk_message_delete(self, payload: discord.RawBulkMessageDeleteEvent) -> None:
+        """Raw event so bulk deletes (purges) are logged even for messages no
+        longer in discord.py's connection cache, sampling from palantir's cache."""
+        if payload.guild_id is None:
             return
-        guild = messages[0].guild
-        if guild is None:
-            return
-        if not self._should_log(guild, "messages"):
-            return
-        channel = messages[0].channel
-
-        if self._is_log_channel(guild, channel.id):
-            for message in messages:
-                await self._drop_cache_entry(guild.id, message.id)
+        guild = self.bot.get_guild(payload.guild_id)
+        if guild is None or not self._should_log(guild, "messages"):
             return
 
+        if self._is_log_channel(guild, payload.channel_id):
+            for message_id in payload.message_ids:
+                await self._drop_cache_entry(guild.id, message_id)
+            return
+
+        cached_by_id = {m.id: m for m in payload.cached_messages}
         sample_lines = []
-        for message in messages[:BULK_DELETE_SAMPLE_LIMIT]:
-            cached = self._cache_get(guild.id, message.id)
-            content = message.content or (cached.get("content") if cached else "") or "*(no content)*"
-            author_id = message.author.id if message.author else (cached.get("author_id") if cached else None)
+        for message_id in sorted(payload.message_ids)[:BULK_DELETE_SAMPLE_LIMIT]:
+            cached_msg = cached_by_id.get(message_id)
+            cached = self._cache_get(guild.id, message_id)
+            content = (
+                (cached_msg.content if cached_msg else None)
+                or (cached.get("content") if cached else "")
+                or "*(no content)*"
+            )
+            if cached_msg is not None:
+                author_id = cached_msg.author.id
+            elif cached:
+                author_id = cached.get("author_id")
+            else:
+                author_id = None
             author_label = f"<@{author_id}>" if author_id else "Unknown"
             sample_lines.append(f"{author_label}: {content}"[:200])
 
+        total = len(payload.message_ids)
         embed = discord.Embed(
             title="🗑️ Bulk Message Delete", color=CATEGORY_COLORS["messages"], timestamp=discord.utils.utcnow()
         )
-        embed.add_field(name="Channel", value=channel.mention, inline=False)
-        embed.add_field(name="Messages Deleted", value=str(len(messages)), inline=False)
+        embed.add_field(name="Channel", value=f"<#{payload.channel_id}>", inline=False)
+        embed.add_field(name="Messages Deleted", value=str(total), inline=False)
         if sample_lines:
             sample_text = "\n".join(sample_lines)
-            if len(messages) > BULK_DELETE_SAMPLE_LIMIT:
-                sample_text += f"\n… and {len(messages) - BULK_DELETE_SAMPLE_LIMIT} more"
+            if total > BULK_DELETE_SAMPLE_LIMIT:
+                sample_text += f"\n… and {total - BULK_DELETE_SAMPLE_LIMIT} more"
             embed.add_field(
                 name=f"Sample (up to {BULK_DELETE_SAMPLE_LIMIT})", value=sample_text[:1024], inline=False
             )
 
         await self._log(guild, "messages", embed)
-        for message in messages:
-            await self._drop_cache_entry(guild.id, message.id)
+        for message_id in payload.message_ids:
+            await self._drop_cache_entry(guild.id, message_id)
 
     # --- Member listeners ----------------------------------------------------
 
