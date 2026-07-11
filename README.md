@@ -29,6 +29,14 @@ with an announcement on level-up. Commands: `rank`/`level [member]` to view leve
 rank, `leaderboard`/`lb`/`top [count]` for the server's top members, and `resetxp <member>`
 (requires `Moderate Members`) to clear a member's progress. XP is persisted to `xp.json`.
 
+**Economy** — a simple bits currency. `payday` grants 120 bits once every 12 hours per member
+(tracked per server), showing the member's new balance and server rank on collection, or the
+time remaining if already claimed. Commands: `payday`, `balance`/`bal [member]` to check bits
+without claiming, `richest [count]` for the server's top bit holders, `give <member> <amount>`
+to transfer bits to another member, `coinflip`/`cf <amount>` to bet bits on a coin flip
+(bets between 10 and 1000 bits), and `setbits <member> <amount>` (requires `Moderate Members`)
+to correct a member's balance. Bits are persisted to `economy.json`.
+
 **Watchdog** — automated detection of raid/spam behavior, reacting faster than a human mod
 can (or when none are online). Ships **in shadow mode by default**: it detects and alerts,
 but takes no action until a mod runs `.watchdog mode active`. Detects:
@@ -76,7 +84,7 @@ to capture the terminal output. This covers uncaught errors from commands and ev
 since discord.py routes those through the same logging system.
 
 All persisted data files (`warnings.json`, `channel_locks.json`, `mod_log.json`, `xp.json`,
-`watchdog.json`, `management.json`) are created automatically on first use — no manual setup
+`economy.json`, `watchdog.json`, `management.json`) are created automatically on first use — no manual setup
 needed.
 
 ## Setup Instructions

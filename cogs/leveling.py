@@ -70,6 +70,8 @@ class Leveling(commands.Cog):
             await ctx.reply("I couldn't find that member.")
         elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
             await ctx.reply(str(error) or "Invalid or missing argument.")
+        elif isinstance(error, commands.CheckAnyFailure):
+            await ctx.reply("You don't have permission to do that.")
         else:
             raise error
 
@@ -155,10 +157,13 @@ class Leveling(commands.Cog):
         await ctx.reply(embed=embed)
 
     @commands.command()
-    @commands.has_permissions(moderate_members=True)
+    @commands.check_any(commands.has_permissions(moderate_members=True), commands.is_owner())
     @commands.guild_only()
     async def resetxp(self, ctx, member: discord.Member):
         """Reset a member's XP and level."""
+        if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+            await ctx.reply("You can't reset XP for someone with an equal or higher role than you.")
+            return
         guild_xp = self.xp.get(str(ctx.guild.id), {})
         had_xp = guild_xp.pop(str(member.id), None) is not None
         async with self._xp_lock:

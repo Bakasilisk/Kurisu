@@ -58,6 +58,7 @@ INITIAL_EXTENSIONS = [
     "cogs.triggers",
     "cogs.moderation",
     "cogs.leveling",
+    "cogs.economy",
     "cogs.watchdog",
     "cogs.verification",
 ]
