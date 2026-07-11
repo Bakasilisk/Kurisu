@@ -93,6 +93,13 @@ class Management(commands.Cog):
         kwargs.setdefault("ephemeral", ctx.interaction is not None)
         return await ctx.reply(*args, **kwargs)
 
+    @staticmethod
+    def _embed(description: str, *, title: str | None = None) -> discord.Embed:
+        embed = discord.Embed(description=description, color=discord.Color.teal())
+        if title:
+            embed.title = title
+        return embed
+
     async def _apply_presence(self):
         # change_presence needs a live gateway; calling it before the client is
         # ready (e.g. cog_load during startup) raises AttributeError on the missing
@@ -119,25 +126,25 @@ class Management(commands.Cog):
         if isinstance(error, commands.CommandInvokeError):
             original = error.original
             if isinstance(original, commands.ExtensionNotFound):
-                await self._reply(ctx, "I couldn't find a cog by that name.")
+                await self._reply(ctx, embed=self._embed("I couldn't find a cog by that name."))
                 return
             elif isinstance(original, commands.ExtensionAlreadyLoaded):
-                await self._reply(ctx, "That cog is already loaded.")
+                await self._reply(ctx, embed=self._embed("That cog is already loaded."))
                 return
             elif isinstance(original, commands.ExtensionNotLoaded):
-                await self._reply(ctx, "That cog isn't loaded.")
+                await self._reply(ctx, embed=self._embed("That cog isn't loaded."))
                 return
             elif isinstance(original, commands.ExtensionError):
-                await self._reply(ctx, f"Couldn't do that: {original}")
+                await self._reply(ctx, embed=self._embed(f"Couldn't do that: {original}"))
                 return
         if isinstance(error, commands.NotOwner):
-            await self._reply(ctx, "Only the bot owner can do that.")
+            await self._reply(ctx, embed=self._embed("Only the bot owner can do that."))
         elif isinstance(error, commands.MissingPermissions):
-            await self._reply(ctx, "You don't have permission to do that.")
+            await self._reply(ctx, embed=self._embed("You don't have permission to do that."))
         elif isinstance(error, commands.BotMissingPermissions):
-            await self._reply(ctx, "I don't have permission to do that.")
+            await self._reply(ctx, embed=self._embed("I don't have permission to do that."))
         elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
-            await self._reply(ctx, str(error) or "Invalid or missing argument.")
+            await self._reply(ctx, embed=self._embed(str(error) or "Invalid or missing argument."))
         else:
             raise error
 
@@ -150,7 +157,7 @@ class Management(commands.Cog):
     @commands.is_owner()
     async def manage_cogs(self, ctx):
         """Manage loaded cogs."""
-        await self._reply(ctx, "Use `.cog list|load|unload|reload <name>` (or `/cog …`).")
+        await self._reply(ctx, embed=self._embed("Use `.cog list|load|unload|reload <name>` (or `/cog …`)."))
 
     @manage_cogs.command(name="list", description="List every known cog and its state.")
     @commands.is_owner()
@@ -166,7 +173,7 @@ class Management(commands.Cog):
             else:
                 status = "⚪ unloaded"
             lines.append(f"`{short}` — {status}")
-        await self._reply(ctx, "\n".join(lines) or "No cogs found.")
+        await self._reply(ctx, embed=self._embed("\n".join(lines) or "No cogs found.", title="Cogs"))
 
     @manage_cogs.command(name="load", description="Load a cog by name.")
     @commands.is_owner()
@@ -178,14 +185,16 @@ class Management(commands.Cog):
         if ext in disabled:
             disabled.remove(ext)
             self._save()
-        await self._reply(ctx, f"✅ Loaded `{_to_short_name(name)}`.")
+        await self._reply(ctx, embed=self._embed(f"✅ Loaded `{_to_short_name(name)}`."))
 
     @manage_cogs.command(name="unload", description="Unload a cog by name.")
     @commands.is_owner()
     async def unload_cog(self, ctx, name: str):
         """Unload a cog by name."""
         if _to_short_name(name) == "management":
-            await self._reply(ctx, "Refusing to unload the management cog — that would lock you out.")
+            await self._reply(
+                ctx, embed=self._embed("Refusing to unload the management cog — that would lock you out.")
+            )
             return
         ext = _to_extension(name)
         await self.bot.unload_extension(ext)
@@ -193,7 +202,7 @@ class Management(commands.Cog):
         if ext not in disabled:
             disabled.append(ext)
             self._save()
-        await self._reply(ctx, f"✅ Unloaded `{_to_short_name(name)}`.")
+        await self._reply(ctx, embed=self._embed(f"✅ Unloaded `{_to_short_name(name)}`."))
 
     @manage_cogs.command(name="reload", description="Reload a cog by name.")
     @commands.is_owner()
@@ -201,7 +210,7 @@ class Management(commands.Cog):
         """Reload a cog by name."""
         ext = _to_extension(name)
         await self.bot.reload_extension(ext)
-        await self._reply(ctx, f"🔁 Reloaded `{_to_short_name(name)}`.")
+        await self._reply(ctx, embed=self._embed(f"🔁 Reloaded `{_to_short_name(name)}`."))
 
     @commands.hybrid_command(name="reloadall", description="Reload every loaded cog.")
     @commands.is_owner()
@@ -214,16 +223,16 @@ class Management(commands.Cog):
             except commands.ExtensionError as e:
                 failures.append(f"`{ext}`: {e}")
         if failures:
-            await self._reply(ctx, "Reloaded with errors:\n" + "\n".join(failures))
+            await self._reply(ctx, embed=self._embed("Reloaded with errors:\n" + "\n".join(failures)))
         else:
-            await self._reply(ctx, f"🔁 Reloaded {len(self.bot.extensions)} extension(s).")
+            await self._reply(ctx, embed=self._embed(f"🔁 Reloaded {len(self.bot.extensions)} extension(s)."))
 
     @commands.hybrid_command(name="sync", description="Re-sync slash commands with Discord.")
     @commands.is_owner()
     async def sync(self, ctx):
         """Re-sync slash commands with Discord."""
         synced = await self.bot.tree.sync()
-        await self._reply(ctx, f"🔄 Synced {len(synced)} slash command(s).")
+        await self._reply(ctx, embed=self._embed(f"🔄 Synced {len(synced)} slash command(s)."))
 
     @commands.hybrid_command(name="guilds", description="List the servers the bot is in.")
     @commands.is_owner()
@@ -233,7 +242,7 @@ class Management(commands.Cog):
             f"{guild.name} (`{guild.id}`) — {guild.member_count} members"
             for guild in self.bot.guilds
         ]
-        await self._reply(ctx, "\n".join(lines) or "Not in any guilds.")
+        await self._reply(ctx, embed=self._embed("\n".join(lines) or "Not in any guilds.", title="Guilds"))
 
     @commands.hybrid_command(name="leave", description="Leave this server, or another by ID.")
     @commands.is_owner()
@@ -243,20 +252,22 @@ class Management(commands.Cog):
         if guild_id is None:
             guild = ctx.guild
             if guild is None:
-                await self._reply(ctx, "There's no current server here — give a guild ID to leave.")
+                await self._reply(
+                    ctx, embed=self._embed("There's no current server here — give a guild ID to leave.")
+                )
                 return
         else:
             try:
                 gid = int(guild_id)
             except ValueError:
-                await self._reply(ctx, "That doesn't look like a valid guild ID.")
+                await self._reply(ctx, embed=self._embed("That doesn't look like a valid guild ID."))
                 return
             guild = self.bot.get_guild(gid)
             if guild is None:
-                await self._reply(ctx, "I'm not in a guild with that ID.")
+                await self._reply(ctx, embed=self._embed("I'm not in a guild with that ID."))
                 return
         # Reply before leaving: a prefix reply can't be posted once we've left the channel.
-        await self._reply(ctx, f"👋 Leaving **{guild.name}** (`{guild.id}`).")
+        await self._reply(ctx, embed=self._embed(f"👋 Leaving **{guild.name}** (`{guild.id}`)."))
         await guild.leave()
 
     @commands.hybrid_command(name="presence", description="Set or clear the bot's status text.")
@@ -268,18 +279,18 @@ class Management(commands.Cog):
             self.config["global"]["presence"] = None
             self._save()
             await self._apply_presence()
-            await self._reply(ctx, "🎮 Presence cleared.")
+            await self._reply(ctx, embed=self._embed("🎮 Presence cleared."))
             return
         self.config["global"]["presence"] = text
         self._save()
         await self._apply_presence()
-        await self._reply(ctx, f"🎮 Presence set to: Playing {text}")
+        await self._reply(ctx, embed=self._embed(f"🎮 Presence set to: Playing {text}"))
 
     @commands.hybrid_command(name="shutdown", description="Shut the bot down.")
     @commands.is_owner()
     async def shutdown(self, ctx):
         """Shut the bot down."""
-        await self._reply(ctx, "🛑 Shutting down.")
+        await self._reply(ctx, embed=self._embed("🛑 Shutting down."))
         await self.bot.close()
 
     # --- Server-admin: per-guild feature toggles ----------------------------------
@@ -292,7 +303,9 @@ class Management(commands.Cog):
     @commands.guild_only()
     async def feature(self, ctx):
         """Manage which cogs' behavior is enabled in this server."""
-        await self._reply(ctx, "Use `.feature list|enable|disable <name>` (or `/feature …`).")
+        await self._reply(
+            ctx, embed=self._embed("Use `.feature list|enable|disable <name>` (or `/feature …`).")
+        )
 
     @feature.command(name="list", description="Show each cog's state in this server.")
     @commands.has_permissions(manage_guild=True)
@@ -305,7 +318,10 @@ class Management(commands.Cog):
             f"`{name}` — {'🔴 disabled' if name in disabled else '🟢 enabled'}"
             for name in sorted(self._toggleable_names())
         ]
-        await self._reply(ctx, "\n".join(lines) or "No toggleable features found.")
+        await self._reply(
+            ctx,
+            embed=self._embed("\n".join(lines) or "No toggleable features found.", title="Feature Toggles"),
+        )
 
     @feature.command(name="enable", description="Enable a cog's behavior in this server.")
     @commands.has_permissions(manage_guild=True)
@@ -313,13 +329,13 @@ class Management(commands.Cog):
     async def feature_enable(self, ctx, name: str):
         """Enable a cog's behavior in this server."""
         if name not in self._toggleable_names():
-            await self._reply(ctx, f"`{name}` isn't a toggleable feature.")
+            await self._reply(ctx, embed=self._embed(f"`{name}` isn't a toggleable feature."))
             return
         guild_conf = self._guild_conf(ctx.guild.id)
         if name in guild_conf["disabled_cogs"]:
             guild_conf["disabled_cogs"].remove(name)
             self._save()
-        await self._reply(ctx, f"✅ `{name}` is now enabled in this server.")
+        await self._reply(ctx, embed=self._embed(f"✅ `{name}` is now enabled in this server."))
 
     @feature.command(name="disable", description="Disable a cog's behavior in this server.")
     @commands.has_permissions(manage_guild=True)
@@ -327,13 +343,13 @@ class Management(commands.Cog):
     async def feature_disable(self, ctx, name: str):
         """Disable a cog's behavior in this server."""
         if name not in self._toggleable_names():
-            await self._reply(ctx, f"`{name}` isn't a toggleable feature.")
+            await self._reply(ctx, embed=self._embed(f"`{name}` isn't a toggleable feature."))
             return
         guild_conf = self._guild_conf(ctx.guild.id)
         if name not in guild_conf["disabled_cogs"]:
             guild_conf["disabled_cogs"].append(name)
             self._save()
-        await self._reply(ctx, f"🚫 `{name}` is now disabled in this server.")
+        await self._reply(ctx, embed=self._embed(f"🚫 `{name}` is now disabled in this server."))
 
 
 async def setup(bot):
