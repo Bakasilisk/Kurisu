@@ -8,6 +8,7 @@ A simple, lightweight Discord bot written in Python using `discord.py`. Requires
 **Triggers**
 - Replies whenever anyone says "kurisutina" (case-insensitive): _Hör auf mich_ **_Kurisutina_** _zu nennen!_
 - Replies whenever anyone says "horny" (case-insensitive): "`@user` ist Horny!"
+- `.nuko`: posts a chain of nuko emotes with a random-length middle section.
 
 **Moderation** (prefix `.`, and also available as `/` slash commands with autocomplete
 descriptions): `kick`, `ban`, `unban`, `timeout`/`mute`, `untimeout`/`unmute`,

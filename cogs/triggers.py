@@ -1,8 +1,16 @@
+import random
+
 from discord.ext import commands
 
 from .management import cog_enabled
 
 FUSSE_TARGET_USER_ID = 1058738968339955782
+
+NUKO_START = "<:nukoHinten:988561883617439784>"
+NUKO_MIDDLE = "<:nukoMittel:988561885131599982>"
+NUKO_END = "<:nukoVorne:988561886490533978>"
+NUKO_MIN_REPEAT = 3
+NUKO_MAX_REPEAT = 12
 
 
 class Triggers(commands.Cog):
@@ -21,6 +29,12 @@ class Triggers(commands.Cog):
     async def fusse(self, ctx):
         """Mention a specific user."""
         await ctx.reply(f"<@{FUSSE_TARGET_USER_ID}>")
+
+    @commands.command(name="nuko")
+    async def nuko(self, ctx):
+        """Post a chain of nuko emotes with a random-length middle section."""
+        count = round(random.triangular(NUKO_MIN_REPEAT, NUKO_MAX_REPEAT, NUKO_MIN_REPEAT))
+        await ctx.reply(NUKO_START + NUKO_MIDDLE * count + NUKO_END)
 
     @commands.Cog.listener()
     async def on_message(self, message):
