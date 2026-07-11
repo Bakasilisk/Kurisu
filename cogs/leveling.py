@@ -76,6 +76,15 @@ class Leveling(commands.Cog):
         """Return today's date in YYYY-MM-DD format (UTC)."""
         return datetime.now(timezone.utc).date().isoformat()
 
+    async def _save_with_dirty_flag(self, dirty_attr: str, file_path: str, data: dict) -> None:
+        """Save data to file and reset dirty flag on success, or set it on failure for retry."""
+        try:
+            await asyncio.to_thread(save_json_atomic, file_path, data)
+            setattr(self, dirty_attr, False)
+        except Exception:
+            setattr(self, dirty_attr, True)
+            raise
+
     @tasks.loop(seconds=XP_FLUSH_INTERVAL_SECONDS)
     async def _flush_xp(self):
         async with self._xp_lock:
@@ -97,12 +106,7 @@ class Leveling(commands.Cog):
             self._last_monthly_reset = today
             async with self._xp_lock:
                 self.messages.clear()
-                try:
-                    await asyncio.to_thread(save_json_atomic, MESSAGES_FILE, {})
-                    self._messages_dirty = False
-                except Exception:
-                    self._messages_dirty = True
-                    raise
+                await self._save_with_dirty_flag("_messages_dirty", MESSAGES_FILE, {})
 
     @_monthly_reset.before_loop
     async def _before_monthly_reset(self):
@@ -179,19 +183,20 @@ class Leveling(commands.Cog):
         async with self._xp_lock:
             guild_xp = self.xp.get(str(ctx.guild.id), {})
             total_xp = guild_xp.get(member_id, 0)
-
-            current_level = level_from_xp(total_xp)
-            level_floor = total_xp_for_level(current_level)
-            level_ceiling = total_xp_for_level(current_level + 1)
-
-            position = None
-            if member_id in guild_xp:
-                sorted_members = sorted(guild_xp.items(), key=lambda kv: kv[1], reverse=True)
-                position = next(
-                    i for i, (uid, _) in enumerate(sorted_members, start=1) if uid == member_id
-                )
-
+            xp_items = list(guild_xp.items()) if member_id in guild_xp else []
             messages_today = self._messages_today_unsafe(ctx.guild.id, member.id)
+
+        current_level = level_from_xp(total_xp)
+        level_floor = total_xp_for_level(current_level)
+        level_ceiling = total_xp_for_level(current_level + 1)
+
+        position = None
+        if xp_items:
+            sorted_members = sorted(xp_items, key=lambda kv: kv[1], reverse=True)
+            position = next(
+                (i for i, (uid, _) in enumerate(sorted_members, start=1) if uid == member_id),
+                None,
+            )
 
         embed = discord.Embed(title=f"{member.display_name}'s Rank", color=discord.Color.gold())
         embed.set_thumbnail(url=member.display_avatar.url)
@@ -213,13 +218,14 @@ class Leveling(commands.Cog):
             if not guild_xp:
                 await ctx.reply("Nobody has earned any XP yet.")
                 return
+            xp_items = list(guild_xp.items())
 
-            sorted_members = sorted(guild_xp.items(), key=lambda kv: kv[1], reverse=True)[:top]
-            lines = []
-            for i, (user_id, xp_amount) in enumerate(sorted_members, start=1):
-                member = ctx.guild.get_member(int(user_id))
-                name = member.mention if member else f"<@{user_id}>"
-                lines.append(f"**#{i}** {name} — Level {level_from_xp(xp_amount)} ({xp_amount} XP)")
+        sorted_members = sorted(xp_items, key=lambda kv: kv[1], reverse=True)[:top]
+        lines = []
+        for i, (user_id, xp_amount) in enumerate(sorted_members, start=1):
+            member = ctx.guild.get_member(int(user_id))
+            name = member.mention if member else f"<@{user_id}>"
+            lines.append(f"**#{i}** {name} — Level {level_from_xp(xp_amount)} ({xp_amount} XP)")
 
         embed = discord.Embed(
             title=f"🏆 {ctx.guild.name} Leaderboard",
@@ -239,12 +245,7 @@ class Leveling(commands.Cog):
         async with self._xp_lock:
             guild_xp = self.xp.get(str(ctx.guild.id), {})
             had_xp = guild_xp.pop(str(member.id), None) is not None
-            try:
-                await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
-                self._dirty = False
-            except Exception:
-                self._dirty = True
-                raise
+            await self._save_with_dirty_flag("_dirty", XP_FILE, self._snapshot())
         if had_xp:
             await ctx.reply(f"🧹 Reset XP for {member.mention}")
         else:
@@ -264,12 +265,7 @@ class Leveling(commands.Cog):
         async with self._xp_lock:
             guild_xp = self.xp.setdefault(str(ctx.guild.id), {})
             guild_xp[str(member.id)] = amount
-            try:
-                await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
-                self._dirty = False
-            except Exception:
-                self._dirty = True
-                raise
+            await self._save_with_dirty_flag("_dirty", XP_FILE, self._snapshot())
         await ctx.reply(f"✅ Set {member.mention}'s XP to **{amount}** (Level {level_from_xp(amount)}).")
 
 
