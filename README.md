@@ -77,7 +77,8 @@ show the pre-change content from palantir's own disk-backed cache (`palantir_mes
 capped at 20,000 messages and 14 days per server, oldest evicted/expired automatically — not a
 config option). Ban/kick/timeout/role-grant actions are attributed to the responsible moderator
 by name via the audit log (requires the *View Audit Log* permission); ban/unban still log
-(unattributed) without it. Attachment archiving is a runtime toggle (`palantir archive on|off`,
+(unattributed) without it. A deleted message likewise names the moderator who removed it when
+a mod deletes another member's message (best-effort via the audit log). Attachment archiving is a runtime toggle (`palantir archive on|off`,
 default off): when on, attached files are downloaded to `palantir_attachments/` on post and
 re-uploaded on delete so they survive Discord's CDN URL expiry, instead of a possibly-expired
 URL.

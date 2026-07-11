@@ -59,6 +59,10 @@ class Palantir(commands.Cog):
         # was consumed by a new join. Primed on cog_load and kept current by the
         # invite_create/invite_delete listeners and each join's own re-fetch.
         self._invite_uses: dict[int, dict[str, int]] = {}
+        # Tracks the last-seen `count` of each message_delete audit-log entry so
+        # a fresh moderator deletion can be told apart from Discord's aggregation
+        # of repeated deletes into one incrementing entry. Keyed by entry id.
+        self._audit_delete_counts: dict[int, int] = {}
         if not self._flush_messages.is_running():
             self._flush_messages.start()
         if not self._sweep_messages.is_running():
@@ -115,6 +119,55 @@ class Palantir(commands.Cog):
     def _has_manage_guild(guild: discord.Guild) -> bool:
         me = guild.me
         return me is not None and me.guild_permissions.manage_guild
+
+    async def _resolve_message_deleter(self, message: discord.Message):
+        """Best-effort: identify which moderator deleted someone else's message
+        via the audit log. Returns None for self-deletions (Discord logs no
+        audit entry for those) or when the bot lacks View Audit Log. Discord
+        aggregates repeated deletes of the same author in the same channel into
+        a single entry with an incrementing `count`, so a bump in that count —
+        or a brand-new, just-created entry — is what marks a fresh moderator
+        deletion, rather than an unchanged stale entry from an earlier purge."""
+        guild = message.guild
+        author = message.author
+        if author is None or not self._has_audit_log_access(guild):
+            return None
+        try:
+            entries = [
+                entry
+                async for entry in guild.audit_logs(
+                    limit=5, action=discord.AuditLogAction.message_delete
+                )
+            ]
+        except (discord.Forbidden, discord.HTTPException):
+            return None
+
+        match = None
+        for entry in entries:
+            if entry.target is None or entry.target.id != author.id:
+                continue
+            extra_channel = getattr(entry.extra, "channel", None)
+            if extra_channel is not None and extra_channel.id != message.channel.id:
+                continue
+            match = entry
+            break
+        if match is None:
+            return None
+
+        count = getattr(match.extra, "count", 1) or 1
+        prev = self._audit_delete_counts.get(match.id)
+        if prev is None:
+            # Never-seen entry: only trust it if it was just created, otherwise a
+            # self-delete would be misattributed to a stale mod-delete entry that
+            # happens to be the most recent one for this author/channel.
+            is_mod_delete = (discord.utils.utcnow() - match.created_at).total_seconds() < 30
+        else:
+            is_mod_delete = count > prev
+        self._audit_delete_counts[match.id] = count
+        # Keep the tracking dict bounded over long uptimes (insertion-ordered).
+        if len(self._audit_delete_counts) > 1000:
+            self._audit_delete_counts.pop(next(iter(self._audit_delete_counts)), None)
+        return match.user if is_mod_delete else None
 
     async def _log(
         self, guild: discord.Guild, category: str, embed: discord.Embed,
@@ -443,6 +496,18 @@ class Palantir(commands.Cog):
         elif cached:
             embed.add_field(name="Author", value=f"Unknown (ID: {cached.get('author_id')})", inline=False)
         embed.add_field(name="Channel", value=f"<#{message.channel.id}>", inline=False)
+
+        deleter = await self._resolve_message_deleter(message)
+        if deleter is not None:
+            deleted_by = f"{deleter.mention} ({deleter})"
+        elif not self._has_audit_log_access(guild):
+            deleted_by = "Unknown (bot lacks View Audit Log)"
+        elif author is not None:
+            deleted_by = f"{author.mention} (self-deleted)"
+        else:
+            deleted_by = "Self-deleted or unknown"
+        embed.add_field(name="Deleted by", value=deleted_by, inline=False)
+
         embed.add_field(name="Content", value=(content or "*No cached content*")[:1024], inline=False)
         if files:
             embed.add_field(name="Attachments", value=f"{len(files)} file(s) re-uploaded below", inline=False)
