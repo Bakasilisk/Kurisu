@@ -13,12 +13,16 @@ mod_log.json
 
 # Leveling data
 xp.json
+messages.json
 
 # Economy data
 economy.json
 
 # Watchdog data
 watchdog.json
+
+# Verification data
+verification.json
 
 # Logs
 logs/
