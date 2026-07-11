@@ -51,6 +51,24 @@ def cog_enabled(bot, guild_id: int, cog_key: str) -> bool:
     return mgmt.is_cog_enabled(guild_id, cog_key)
 
 
+def has_permissions_or_owner(**perms):
+    """A command check that passes if the invoker has all `perms` in the guild,
+    or is the bot owner. Owner-bypass lives here since it's the management cog's
+    concern (see is_owner()); behavioral cogs consume this rather than open-coding
+    the check_any(has_permissions, is_owner) pair."""
+    return commands.check_any(commands.has_permissions(**perms), commands.is_owner())
+
+
+async def actor_outranks(bot, ctx, member) -> bool:
+    """Whether the invoker may act on `member` by role hierarchy. The guild owner
+    and the bot owner both bypass the check."""
+    return (
+        member.top_role < ctx.author.top_role
+        or ctx.author == ctx.guild.owner
+        or await bot.is_owner(ctx.author)
+    )
+
+
 def globally_disabled_extensions() -> set[str]:
     """Standalone reader of global.disabled_extensions, for bot.py to consult
     before the management cog (or any cog) is loaded."""

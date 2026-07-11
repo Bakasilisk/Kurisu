@@ -7,7 +7,7 @@ from datetime import datetime, time as dt_time, timezone
 import discord
 from discord.ext import commands, tasks
 
-from .management import cog_enabled
+from .management import actor_outranks, cog_enabled, has_permissions_or_owner
 from .storage import load_json, save_json_atomic
 
 XP_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "xp.json")
@@ -235,11 +235,11 @@ class Leveling(commands.Cog):
         await ctx.reply(embed=embed)
 
     @commands.command()
-    @commands.check_any(commands.has_permissions(moderate_members=True), commands.is_owner())
+    @has_permissions_or_owner(moderate_members=True)
     @commands.guild_only()
     async def resetxp(self, ctx, member: discord.Member):
         """Reset a member's XP and level."""
-        if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+        if not await actor_outranks(self.bot, ctx, member):
             await ctx.reply("You can't reset XP for someone with an equal or higher role than you.")
             return
         async with self._xp_lock:
@@ -252,11 +252,11 @@ class Leveling(commands.Cog):
             await ctx.reply(f"{member.mention} has no XP to reset.")
 
     @commands.command(name="setxp")
-    @commands.check_any(commands.has_permissions(moderate_members=True), commands.is_owner())
+    @has_permissions_or_owner(moderate_members=True)
     @commands.guild_only()
     async def setxp(self, ctx, member: discord.Member, amount: int):
         """Set a member's total XP."""
-        if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+        if not await actor_outranks(self.bot, ctx, member):
             await ctx.reply("You can't set XP for someone with an equal or higher role than you.")
             return
         if amount < 0:
