@@ -12,6 +12,7 @@ from typing import NamedTuple
 import discord
 from discord.ext import commands, tasks
 
+from .management import cog_enabled
 from .moderation import restore_overwrite, snapshot_overwrite
 from .storage import load_json, save_json_atomic
 
@@ -242,6 +243,8 @@ class Watchdog(commands.Cog):
     async def on_message(self, message: discord.Message) -> None:
         if message.guild is None:
             return
+        if not cog_enabled(self.bot, message.guild.id, "watchdog"):
+            return
         if message.webhook_id is not None:
             await self._handle_webhook_message(message)
             return
@@ -322,6 +325,8 @@ class Watchdog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
+        if not cog_enabled(self.bot, member.guild.id, "watchdog"):
+            return
         key = (member.guild.id, member.id)
         self._member_activity.pop(key, None)
         self._actioned_members.pop(key, None)

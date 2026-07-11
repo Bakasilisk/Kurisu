@@ -6,6 +6,7 @@ import time
 import discord
 from discord.ext import commands, tasks
 
+from .management import cog_enabled
 from .storage import load_json, save_json_atomic
 
 XP_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "xp.json")
@@ -75,6 +76,8 @@ class Leveling(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not message.guild:
+            return
+        if not cog_enabled(self.bot, message.guild.id, "leveling"):
             return
 
         key = (message.guild.id, message.author.id)

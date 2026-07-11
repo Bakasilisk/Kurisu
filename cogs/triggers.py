@@ -1,5 +1,7 @@
 from discord.ext import commands
 
+from .management import cog_enabled
+
 
 class Triggers(commands.Cog):
     def __init__(self, bot):
@@ -9,6 +11,9 @@ class Triggers(commands.Cog):
     async def on_message(self, message):
         # Prevent the bot from replying to itself
         if message.author == self.bot.user:
+            return
+
+        if message.guild and not cog_enabled(self.bot, message.guild.id, "triggers"):
             return
 
         # Check if "kurisutina" is in the message content (case-insensitive)

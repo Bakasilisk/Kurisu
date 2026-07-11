@@ -3,6 +3,7 @@ import os
 import discord
 from discord.ext import commands
 
+from .management import cog_enabled
 from .storage import load_json, save_json_atomic
 
 VERIFICATION_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "verification.json")
@@ -23,6 +24,9 @@ class Verification(commands.Cog):
     def _guild_conf(self, guild_id: int) -> dict:
         return self.config.setdefault(str(guild_id), _default_guild_config())
 
+    async def cog_check(self, ctx):
+        return ctx.guild is None or cog_enabled(self.bot, ctx.guild.id, "verification")
+
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MissingPermissions):
             await ctx.reply("You don't have permission to do that.")
@@ -34,6 +38,8 @@ class Verification(commands.Cog):
             await ctx.reply("I couldn't find that member.")
         elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
             await ctx.reply(str(error) or "Invalid or missing argument.")
+        elif isinstance(error, commands.CheckFailure):
+            return
         else:
             raise error
 

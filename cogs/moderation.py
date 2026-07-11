@@ -6,6 +6,7 @@ from datetime import timedelta
 import discord
 from discord.ext import commands
 
+from .management import cog_enabled
 from .storage import load_json, save_json_atomic
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,9 @@ class Moderation(commands.Cog):
 
     def _save_mod_log_channels(self):
         save_json_atomic(MODLOG_FILE, self.mod_log_channels)
+
+    async def cog_check(self, ctx):
+        return ctx.guild is None or cog_enabled(self.bot, ctx.guild.id, "moderation")
 
     @staticmethod
     async def _reply(ctx, *args, **kwargs):
@@ -159,6 +163,8 @@ class Moderation(commands.Cog):
             await self._reply(ctx, "I couldn't find that channel.")
         elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
             await self._reply(ctx, str(error) or "Invalid or missing argument.")
+        elif isinstance(error, commands.CheckFailure):
+            return
         else:
             raise error
 

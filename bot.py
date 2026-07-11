@@ -6,6 +6,8 @@ import os
 import discord
 from discord.ext import commands
 
+from cogs.management import globally_disabled_extensions
+
 logger = logging.getLogger("kurisu")
 
 LOG_DIR = "logs"
@@ -52,6 +54,7 @@ intents.members = True
 bot = commands.Bot(command_prefix=".", intents=intents)
 
 INITIAL_EXTENSIONS = [
+    "cogs.management",
     "cogs.triggers",
     "cogs.moderation",
     "cogs.leveling",
@@ -77,7 +80,11 @@ async def on_ready():
 
 async def main():
     async with bot:
+        disabled = globally_disabled_extensions()
         for extension in INITIAL_EXTENSIONS:
+            if extension in disabled and extension != "cogs.management":
+                logger.info("Skipping globally-disabled extension %s", extension)
+                continue
             try:
                 await bot.load_extension(extension)
             except commands.ExtensionError:

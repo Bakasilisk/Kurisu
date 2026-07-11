@@ -58,8 +58,15 @@ lockdown state, so a restart mid-lockdown resumes correctly) is persisted to `wa
 Known v1 limitations: webhook messages are safely ignored rather than acted upon (a webhook
 can't be timed out); detection thresholds are fixed constants, not yet per-server tunable.
 
+**Management** — bot administration from Discord. Owner-only (bot owner account):
+`cog list/load/unload/reload <name>`, `reloadall`, `sync`, `guilds`, `leave <guild_id>`,
+`presence <text>`, `shutdown`. Server admins (`Manage Server`): `feature list/enable/disable
+<name>` to soft-disable a cog's behavior in their own guild only. Both levels persist to
+`management.json`.
+
 The bot loads each cog independently at startup — if one fails to load, the failure is
-logged and the rest of the bot still starts.
+logged and the rest of the bot still starts. Extensions unloaded via `.cog unload` stay
+unloaded across restarts (skipped by `bot.py`), and `management` itself can't be unloaded.
 
 **Logging** — in addition to the console, everything is written to a rotating logfile at
 `logs/kurisu.log` (5 MB per file, 3 backups kept), so errors can be reviewed without needing
@@ -67,7 +74,8 @@ to capture the terminal output. This covers uncaught errors from commands and ev
 since discord.py routes those through the same logging system.
 
 All persisted data files (`warnings.json`, `channel_locks.json`, `mod_log.json`, `xp.json`,
-`watchdog.json`) are created automatically on first use — no manual setup needed.
+`watchdog.json`, `management.json`) are created automatically on first use — no manual setup
+needed.
 
 ## Setup Instructions
 
