@@ -209,9 +209,9 @@ class Leveling(commands.Cog):
 
     @commands.command(name="leaderboard", aliases=["lb", "top"])
     @commands.guild_only()
-    async def leaderboard(self, ctx, top: int = 10):
-        """Show the server's XP leaderboard."""
-        top = max(1, min(top, 25))
+    async def leaderboard(self, ctx, top: int = 9):
+        """Show the server's XP leaderboard as a 3x3 grid."""
+        top = max(1, min(top, 9))
 
         async with self._xp_lock:
             guild_xp = self.xp.get(str(ctx.guild.id), {})
@@ -222,20 +222,22 @@ class Leveling(commands.Cog):
             guild_messages = self.messages.get(str(ctx.guild.id), {})
 
         sorted_members = sorted(xp_items, key=lambda kv: kv[1], reverse=True)[:top]
-        lines = []
         today = self._today_str()
-        for i, (user_id, xp_amount) in enumerate(sorted_members, start=1):
-            member = ctx.guild.get_member(int(user_id))
-            name = member.mention if member else f"<@{user_id}>"
-            user_messages = guild_messages.get(user_id, {})
-            messages_today = user_messages.get("count", 0) if user_messages.get("date") == today else 0
-            lines.append(f"**#{i}** {name} — Level {level_from_xp(xp_amount)} ({xp_amount} XP, {messages_today} msgs today)")
 
         embed = discord.Embed(
             title=f"🏆 {ctx.guild.name} Leaderboard",
-            description="\n".join(lines),
             color=discord.Color.gold(),
         )
+        for i, (user_id, xp_amount) in enumerate(sorted_members, start=1):
+            member = ctx.guild.get_member(int(user_id))
+            name = member.display_name if member else f"Unknown ({user_id})"
+            user_messages = guild_messages.get(user_id, {})
+            messages_today = user_messages.get("count", 0) if user_messages.get("date") == today else 0
+            embed.add_field(
+                name=f"#{i} **{name}**",
+                value=f"Level {level_from_xp(xp_amount)} | {xp_amount} XP | {messages_today} msgs today",
+                inline=True,
+            )
         await ctx.reply(embed=embed)
 
     @commands.command()
