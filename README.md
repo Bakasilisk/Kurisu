@@ -26,9 +26,10 @@ check it with `modlog`, and turn it off with `modlog disable` (all three require
 
 **Leveling** — members earn 15-25 XP per message (60s cooldown to prevent spam farming),
 with an announcement on level-up. Commands: `rank`/`level [member]` to view level/XP/server
-rank, `leaderboard`/`lb`/`top [count]` for the server's top members, `resetxp <member>`
-(requires `Moderate Members`) to clear a member's progress, and `setxp <member> <amount>`
-(requires `Moderate Members`) to set a member's XP directly. XP is persisted to `xp.json`.
+rank and messages sent today, `leaderboard`/`lb`/`top [count]` for the server's top members,
+`resetxp <member>` (requires `Moderate Members`) to clear a member's progress, and `setxp
+<member> <amount>` (requires `Moderate Members`) to set a member's XP directly. XP is persisted
+to `xp.json` and message counts to `messages.json` (reset monthly).
 
 **Economy** — a simple bits currency. `payday` grants 120 bits once every 12 hours per member
 (tracked per server), showing the member's new balance and server rank on collection, or the
@@ -88,7 +89,7 @@ to capture the terminal output. This covers uncaught errors from commands and ev
 since discord.py routes those through the same logging system.
 
 All persisted data files (`warnings.json`, `channel_locks.json`, `mod_log.json`, `xp.json`,
-`economy.json`, `watchdog.json`, `management.json`) are created automatically on first use — no manual setup
+`economy.json`, `watchdog.json`, `management.json`, `messages.json`) are created automatically on first use — no manual setup
 needed.
 
 ## Setup Instructions
