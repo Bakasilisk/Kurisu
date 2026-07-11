@@ -1,7 +1,9 @@
 # Kurisutina Discord Bot
 
-A simple, lightweight Discord bot written in Python using `discord.py`. Requires **Python 3.10+**
-(the code uses `X | None` union type hints). Command prefix is `.`.
+An all-in-one, self-hosted Discord bot built on `discord.py`: moderation, automated raid/spam
+defense, full server surveillance logging, leveling, and a bits economy. Zero infrastructure —
+no database, no external services; everything persists to JSON files next to the code.
+Command prefix is `.`.
 
 - [Features](#features):
   [Triggers](#triggers) ·
@@ -250,6 +252,7 @@ archiving is turned on.
    - Copy the generated URL and open it in your browser to invite the bot to your server.
 
 4. **Run the Bot:**
+   - Requires **Python 3.10+**.
    - Set up and activate the virtual environment:
      ```bash
      python3 -m venv .venv
