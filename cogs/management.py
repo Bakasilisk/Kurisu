@@ -80,12 +80,15 @@ async def actor_outranks(bot, ctx, member) -> bool:
     )
 
 
-async def require_outranks(bot, ctx, member, action: str) -> bool:
+async def require_outranks(bot, ctx, member, action: str, *, reply=None) -> bool:
     """Guard for commands that act on a member: replies and returns False if the
     invoker doesn't outrank `member` by role hierarchy (see actor_outranks),
-    otherwise returns True."""
+    otherwise returns True. `reply` defaults to ctx.reply; pass a cog's own
+    ephemeral-aware reply helper for hybrid commands."""
+    if reply is None:
+        reply = ctx.reply
     if not await actor_outranks(bot, ctx, member):
-        await ctx.reply(f"You can't {action} someone with an equal or higher role than you.")
+        await reply(f"You can't {action} someone with an equal or higher role than you.")
         return False
     return True
 

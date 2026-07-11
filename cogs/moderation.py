@@ -12,6 +12,7 @@ from .management import (
     common_error_reply,
     has_permissions_or_owner,
     reply_ephemeral_aware,
+    require_outranks,
 )
 from .storage import data_path, load_json, save_json_atomic
 
@@ -252,6 +253,10 @@ class Moderation(commands.Cog):
     @commands.guild_only()
     async def untimeout(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         """Remove an active timeout from a member."""
+        error = await self._hierarchy_error(ctx, member, "remove a timeout from")
+        if error:
+            await self._reply(ctx, error)
+            return
         await member.timeout(None, reason=f"{ctx.author}: {reason}")
         await self._reply(ctx, f"🔊 Removed timeout from {member.mention}")
         await self._log_action(
@@ -313,6 +318,12 @@ class Moderation(commands.Cog):
     @commands.guild_only()
     async def clearwarnings(self, ctx, member: discord.Member):
         """Clear all warnings for a member."""
+        # Actor-only check: clearing warnings is local bookkeeping, not a Discord-side
+        # action, so there's no bot-role hierarchy constraint to enforce here.
+        if not await require_outranks(
+            self.bot, ctx, member, "clear warnings for", reply=lambda text: self._reply(ctx, text)
+        ):
+            return
         guild_warnings = self.warnings.get(str(ctx.guild.id), {})
         count = len(guild_warnings.pop(str(member.id), []))
         self._save_warnings()
