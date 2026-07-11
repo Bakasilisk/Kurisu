@@ -1,12 +1,10 @@
-import os
-
 import discord
 from discord.ext import commands
 
-from .management import cog_enabled
-from .storage import load_json, save_json_atomic
+from .management import bot_outranks, cog_enabled, common_error_reply
+from .storage import backfill_defaults, data_path, load_json, save_json_atomic
 
-VERIFICATION_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "verification.json")
+VERIFICATION_FILE = data_path("verification.json")
 
 
 def _default_guild_config() -> dict:
@@ -22,23 +20,18 @@ class Verification(commands.Cog):
         save_json_atomic(VERIFICATION_FILE, self.config)
 
     def _guild_conf(self, guild_id: int) -> dict:
-        return self.config.setdefault(str(guild_id), _default_guild_config())
+        entry = self.config.setdefault(str(guild_id), {})
+        return backfill_defaults(entry, _default_guild_config())
 
     async def cog_check(self, ctx):
         return ctx.guild is None or cog_enabled(self.bot, ctx.guild.id, "verification")
 
     async def cog_command_error(self, ctx, error):
-        if isinstance(error, commands.MissingPermissions):
-            await ctx.reply("You don't have permission to do that.")
-        elif isinstance(error, commands.BotMissingPermissions):
-            await ctx.reply("I don't have permission to do that.")
-        elif isinstance(error, commands.RoleNotFound):
+        if isinstance(error, commands.RoleNotFound):
             await ctx.reply("I couldn't find that role.")
         elif isinstance(error, commands.MemberNotFound):
             await ctx.reply("I couldn't find that member.")
-        elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
-            await ctx.reply(str(error) or "Invalid or missing argument.")
-        elif isinstance(error, commands.CheckFailure):
+        elif await common_error_reply(ctx, error):
             return
         else:
             raise error
@@ -48,7 +41,7 @@ class Verification(commands.Cog):
     @commands.guild_only()
     async def verification(self, ctx):
         """Show the current verification configuration."""
-        guild_conf = self._guild_conf(ctx.guild.id)
+        guild_conf = self.config.get(str(ctx.guild.id), _default_guild_config())
         granter = (
             ctx.guild.get_role(guild_conf["granter_role_id"])
             if guild_conf["granter_role_id"]
@@ -111,7 +104,7 @@ class Verification(commands.Cog):
         if target_role in member.roles:
             await ctx.reply(f"{member.mention} already has {target_role.mention}.")
             return
-        if target_role >= ctx.guild.me.top_role:
+        if not bot_outranks(ctx.guild, target_role):
             await ctx.reply("I can't assign a role that's equal to or higher than my own top role.")
             return
 

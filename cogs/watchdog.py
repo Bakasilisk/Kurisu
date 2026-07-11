@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import logging
-import os
 import re
 import time
 import typing
@@ -14,11 +13,11 @@ from discord.ext import commands, tasks
 
 from .management import cog_enabled
 from .moderation import restore_overwrite, snapshot_overwrite
-from .storage import load_json, save_json_atomic
+from .storage import backfill_defaults, data_path, load_json, save_json_atomic
 
 logger = logging.getLogger(__name__)
 
-WATCHDOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "watchdog.json")
+WATCHDOG_FILE = data_path("watchdog.json")
 
 URL_RE = re.compile(r"https?://\S+")
 
@@ -83,6 +82,15 @@ class HashEvent(NamedTuple):
 class PatternATrip(NamedTuple):
     timestamp: float
     member_id: int
+
+
+class ActionResult(NamedTuple):
+    """The outcome of _respond_to_member's enforcement actions, as opposed to
+    the detection event itself — bundled so _send_alert's call site can't
+    silently swap two same-typed positional args."""
+    timeout_ok: bool
+    timeout_error: Exception | None
+    deleted: int
 
 
 def _content_hash(message: discord.Message) -> str | None:
@@ -210,16 +218,15 @@ class Watchdog(commands.Cog):
         save_json_atomic(WATCHDOG_FILE, self.config)
 
     def _guild_conf(self, guild_id: int) -> dict:
-        guild_conf = self.config.setdefault(str(guild_id), _default_guild_config())
         # Backfill any keys missing from a config persisted by an earlier schema
         # (e.g. a guild's config saved before "lockdown" or some other field
-        # existed), so accessing a newer key never raises a bare KeyError.
-        defaults = _default_guild_config()
-        for key, value in defaults.items():
-            guild_conf.setdefault(key, value)
-        for key, value in defaults["lockdown"].items():
-            guild_conf["lockdown"].setdefault(key, value)
-        return guild_conf
+        # existed, or before some field within "lockdown" existed), so
+        # accessing a newer key never raises a bare KeyError. Recurses into
+        # "lockdown", but only fills keys that are *absent* — an existing
+        # `expires_at: null` on an active lockdown (meaning "stay locked") is
+        # a present key and is left untouched, not treated as missing.
+        guild_conf = self.config.setdefault(str(guild_id), {})
+        return backfill_defaults(guild_conf, _default_guild_config())
 
     def _high_value_role_ids(self, guild: discord.Guild) -> set[int]:
         now = time.monotonic()
@@ -331,33 +338,31 @@ class Watchdog(commands.Cog):
         self._member_activity.pop(key, None)
         self._actioned_members.pop(key, None)
 
+    def _prune_dict_of_deques(self, mapping: dict, max_age: float, now: float) -> list:
+        """Prune every deque in `mapping` to `max_age` and delete any key whose
+        deque became empty as a result. Returns the deleted keys, so a caller
+        needing extra cleanup tied to a specific mapping (e.g. _member_activity's
+        paired _actioned_members entries) can act on them afterward."""
+        stale_keys = []
+        for key, dq in mapping.items():
+            _prune_deque(dq, max_age, now)
+            if not dq:
+                stale_keys.append(key)
+        for key in stale_keys:
+            del mapping[key]
+        return stale_keys
+
     @tasks.loop(seconds=PRUNE_INTERVAL_SECONDS)
     async def _prune_activity(self):
         now = time.monotonic()
-        stale_keys = []
-        for key, events in self._member_activity.items():
-            _prune_deque(events, MEMBER_ACTIVITY_MAX_AGE_SECONDS, now)
-            if not events:
-                stale_keys.append(key)
+        stale_keys = self._prune_dict_of_deques(
+            self._member_activity, MEMBER_ACTIVITY_MAX_AGE_SECONDS, now
+        )
         for key in stale_keys:
-            del self._member_activity[key]
             self._actioned_members.pop(key, None)
 
-        stale_hash_keys = []
-        for hash_key, hash_events in self._content_hash_activity.items():
-            _prune_deque(hash_events, DUP_CONTENT_WINDOW_SECONDS, now)
-            if not hash_events:
-                stale_hash_keys.append(hash_key)
-        for hash_key in stale_hash_keys:
-            del self._content_hash_activity[hash_key]
-
-        stale_guild_ids = []
-        for guild_id, trips in self._pattern_a_trips.items():
-            _prune_deque(trips, RAID_WAVE_WINDOW_SECONDS, now)
-            if not trips:
-                stale_guild_ids.append(guild_id)
-        for guild_id in stale_guild_ids:
-            del self._pattern_a_trips[guild_id]
+        self._prune_dict_of_deques(self._content_hash_activity, DUP_CONTENT_WINDOW_SECONDS, now)
+        self._prune_dict_of_deques(self._pattern_a_trips, RAID_WAVE_WINDOW_SECONDS, now)
 
     async def _trigger_raid_wave(self, guild, involved_member_ids, reason, *, events_by_author):
         """Common entry point for both wave triggers (repeated Pattern A trips,
@@ -555,12 +560,21 @@ class Watchdog(commands.Cog):
             self._lockdown_tasks.pop(guild.id, None)
             await self._send_lockdown_lifted_alert(guild, manual=manual, actor=actor)
 
-    async def _send_lockdown_alert(self, guild, reason, stay_locked, *, failed_count=0, shadow=False):
-        guild_conf = self._guild_conf(guild.id)
+    async def _send_to_log_channel(self, guild, guild_conf, embed) -> None:
+        """Resolve the guild's configured log channel and send `embed` to it,
+        silently no-op'ing if none is configured/resolvable, and swallowing a
+        Forbidden (missing send perms there) rather than raising."""
         log_channel_id = guild_conf["log_channel_id"]
         log_channel = guild.get_channel(log_channel_id) if log_channel_id else None
         if log_channel is None:
             return
+        try:
+            await log_channel.send(embed=embed)
+        except discord.Forbidden:
+            pass
+
+    async def _send_lockdown_alert(self, guild, reason, stay_locked, *, failed_count=0, shadow=False):
+        guild_conf = self._guild_conf(guild.id)
 
         description = reason
         if shadow:
@@ -592,17 +606,10 @@ class Watchdog(commands.Cog):
             color=discord.Color.orange() if shadow else discord.Color.dark_red(),
             timestamp=discord.utils.utcnow(),
         )
-        try:
-            await log_channel.send(embed=embed)
-        except discord.Forbidden:
-            pass
+        await self._send_to_log_channel(guild, guild_conf, embed)
 
     async def _send_lockdown_lifted_alert(self, guild, *, manual, actor=None):
         guild_conf = self._guild_conf(guild.id)
-        log_channel_id = guild_conf["log_channel_id"]
-        log_channel = guild.get_channel(log_channel_id) if log_channel_id else None
-        if log_channel is None:
-            return
 
         description = (
             f"Manually lifted by {actor.mention if actor else 'a moderator'}."
@@ -613,10 +620,7 @@ class Watchdog(commands.Cog):
             title="🔓 Watchdog Lockdown Lifted", description=description,
             color=discord.Color.green(), timestamp=discord.utils.utcnow(),
         )
-        try:
-            await log_channel.send(embed=embed)
-        except discord.Forbidden:
-            pass
+        await self._send_to_log_channel(guild, guild_conf, embed)
 
     async def _respond_to_member(self, guild, member, events, reason, *, role_pinged):
         """Timeout, then delete, then alert — in that order, so the burst is
@@ -644,20 +648,15 @@ class Watchdog(commands.Cog):
                 except discord.HTTPException:
                     pass
 
-        await self._send_alert(
-            guild, member, events, reason, role_pinged, shadow, timeout_ok, timeout_error, deleted
-        )
+        action = ActionResult(timeout_ok=timeout_ok, timeout_error=timeout_error, deleted=deleted)
+        await self._send_alert(guild, member, events, reason, role_pinged, shadow, action)
 
     async def _send_alert(
-        self, guild, member, events, reason, role_pinged, shadow, timeout_ok, timeout_error, deleted
+        self, guild, member, events, reason, role_pinged, shadow, action: ActionResult
     ):
         guild_conf = self._guild_conf(guild.id)
-        log_channel_id = guild_conf["log_channel_id"]
-        log_channel = guild.get_channel(log_channel_id) if log_channel_id else None
-        if log_channel is None:
-            return
 
-        if not timeout_ok:
+        if not action.timeout_ok:
             title = "⚠️ WATCHDOG: TIMEOUT FAILED — manual action required"
             color = discord.Color.red()
         elif shadow:
@@ -677,22 +676,19 @@ class Watchdog(commands.Cog):
         embed.add_field(name="Channels touched", value=channels_touched or "None", inline=False)
         if role_pinged:
             embed.add_field(name="Role pinged", value=role_pinged, inline=False)
-        embed.add_field(name="Messages deleted", value=str(deleted))
-        if not timeout_ok:
+        embed.add_field(name="Messages deleted", value=str(action.deleted))
+        if not action.timeout_ok:
             embed.add_field(
                 name="Timeout failed",
                 value=(
                     f"Could not time out {member.mention} — likely a role-hierarchy issue "
                     f"(the bot's role may sit below the member's top role). Manual action "
-                    f"needed.\nError: {timeout_error}"
+                    f"needed.\nError: {action.timeout_error}"
                 ),
                 inline=False,
             )
 
-        try:
-            await log_channel.send(embed=embed)
-        except discord.Forbidden:
-            pass
+        await self._send_to_log_channel(guild, guild_conf, embed)
 
     @_prune_activity.before_loop
     async def _before_prune_activity(self):

@@ -3,9 +3,9 @@ import os
 import discord
 from discord.ext import commands
 
-from .storage import load_json, save_json_atomic
+from .storage import data_path, load_json, save_json_atomic
 
-MANAGEMENT_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "management.json")
+MANAGEMENT_FILE = data_path("management.json")
 COGS_DIR = os.path.dirname(__file__)
 
 # Files in cogs/ that aren't behavioral cogs themselves and shouldn't show up in
@@ -38,7 +38,18 @@ def _to_short_name(name: str) -> str:
 
 
 def _default_config() -> dict:
-    return {"global": {"disabled_extensions": [], "presence": None}, "guilds": {}}
+    return {"global": {"disabled_extensions": [], "presence": None}}
+
+
+def _toggle_membership(lst: list, item, present: bool) -> None:
+    """Ensure `item`'s membership in `lst` matches `present` (add if missing and
+    should be present, remove if there and shouldn't be)."""
+    if present:
+        if item not in lst:
+            lst.append(item)
+    else:
+        if item in lst:
+            lst.remove(item)
 
 
 def cog_enabled(bot, guild_id: int, cog_key: str) -> bool:
@@ -67,6 +78,64 @@ async def actor_outranks(bot, ctx, member) -> bool:
         or ctx.author == ctx.guild.owner
         or await bot.is_owner(ctx.author)
     )
+
+
+async def require_outranks(bot, ctx, member, action: str) -> bool:
+    """Guard for commands that act on a member: replies and returns False if the
+    invoker doesn't outrank `member` by role hierarchy (see actor_outranks),
+    otherwise returns True."""
+    if not await actor_outranks(bot, ctx, member):
+        await ctx.reply(f"You can't {action} someone with an equal or higher role than you.")
+        return False
+    return True
+
+
+def bot_outranks(guild, role_or_member) -> bool:
+    """Whether the bot's top role is strictly higher than `role_or_member`'s
+    (or, if given a discord.Member, that member's top role). Callers checking
+    "can the bot act on this target" use `not bot_outranks(...)` to error out."""
+    top_role = role_or_member.top_role if isinstance(role_or_member, discord.Member) else role_or_member
+    return guild.me.top_role > top_role
+
+
+def rank_of(items, key, target_id) -> int | None:
+    """1-based rank of `target_id` within `items` (an iterable of (id, value) pairs)
+    after sorting by `key` descending, or None if `target_id` isn't present. `key`
+    is applied the same way as in sorted() — to each (id, value) pair."""
+    sorted_items = sorted(items, key=key, reverse=True)
+    for i, (item_id, _) in enumerate(sorted_items, start=1):
+        if item_id == target_id:
+            return i
+    return None
+
+
+async def reply_ephemeral_aware(ctx, *args, **kwargs):
+    """ctx.reply, but ephemeral (visible only to the invoker) when the command was
+    invoked via / rather than the text prefix."""
+    kwargs.setdefault("ephemeral", ctx.interaction is not None)
+    return await ctx.reply(*args, **kwargs)
+
+
+async def common_error_reply(ctx, error, reply=None) -> bool:
+    """Handle the error branches duplicated across every cog's cog_command_error.
+    Returns True if handled (a reply was sent, or intentionally suppressed for
+    CheckFailure), False if the caller should handle/raise it itself. `reply`
+    defaults to ctx.reply; pass e.g. a lambda routing through a cog's own
+    ephemeral-aware reply helper instead."""
+    if reply is None:
+        reply = ctx.reply
+    if isinstance(error, commands.MissingPermissions):
+        await reply("You don't have permission to do that.")
+        return True
+    elif isinstance(error, commands.BotMissingPermissions):
+        await reply("I don't have permission to do that.")
+        return True
+    elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
+        await reply(str(error) or "Invalid or missing argument.")
+        return True
+    elif isinstance(error, commands.CheckFailure):
+        return True
+    return False
 
 
 def globally_disabled_extensions() -> set[str]:
@@ -108,8 +177,7 @@ class Management(commands.Cog):
     async def _reply(ctx, *args, **kwargs):
         """ctx.reply, but ephemeral (visible only to the invoker) when the command
         was invoked via / rather than the text prefix — mirrors Moderation._reply."""
-        kwargs.setdefault("ephemeral", ctx.interaction is not None)
-        return await ctx.reply(*args, **kwargs)
+        return await reply_ephemeral_aware(ctx, *args, **kwargs)
 
     @staticmethod
     def _embed(description: str, *, title: str | None = None) -> discord.Embed:
@@ -199,10 +267,8 @@ class Management(commands.Cog):
         """Load a cog by name."""
         ext = _to_extension(name)
         await self.bot.load_extension(ext)
-        disabled = self.config["global"]["disabled_extensions"]
-        if ext in disabled:
-            disabled.remove(ext)
-            self._save()
+        _toggle_membership(self.config["global"]["disabled_extensions"], ext, present=False)
+        self._save()
         await self._reply(ctx, embed=self._embed(f"✅ Loaded `{_to_short_name(name)}`."))
 
     @manage_cogs.command(name="unload", description="Unload a cog by name.")
@@ -216,10 +282,8 @@ class Management(commands.Cog):
             return
         ext = _to_extension(name)
         await self.bot.unload_extension(ext)
-        disabled = self.config["global"]["disabled_extensions"]
-        if ext not in disabled:
-            disabled.append(ext)
-            self._save()
+        _toggle_membership(self.config["global"]["disabled_extensions"], ext, present=True)
+        self._save()
         await self._reply(ctx, embed=self._embed(f"✅ Unloaded `{_to_short_name(name)}`."))
 
     @manage_cogs.command(name="reload", description="Reload a cog by name.")
@@ -350,9 +414,8 @@ class Management(commands.Cog):
             await self._reply(ctx, embed=self._embed(f"`{name}` isn't a toggleable feature."))
             return
         guild_conf = self._guild_conf(ctx.guild.id)
-        if name in guild_conf["disabled_cogs"]:
-            guild_conf["disabled_cogs"].remove(name)
-            self._save()
+        _toggle_membership(guild_conf["disabled_cogs"], name, present=False)
+        self._save()
         await self._reply(ctx, embed=self._embed(f"✅ `{name}` is now enabled in this server."))
 
     @feature.command(name="disable", description="Disable a cog's behavior in this server.")
@@ -364,9 +427,8 @@ class Management(commands.Cog):
             await self._reply(ctx, embed=self._embed(f"`{name}` isn't a toggleable feature."))
             return
         guild_conf = self._guild_conf(ctx.guild.id)
-        if name not in guild_conf["disabled_cogs"]:
-            guild_conf["disabled_cogs"].append(name)
-            self._save()
+        _toggle_membership(guild_conf["disabled_cogs"], name, present=True)
+        self._save()
         await self._reply(ctx, embed=self._embed(f"🚫 `{name}` is now disabled in this server."))
 
 

@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 
+from .management import reply_ephemeral_aware
+
 FIELD_VALUE_LIMIT = 1024
 
 
@@ -12,8 +14,7 @@ class Help(commands.Cog):
     async def _reply(ctx, *args, **kwargs):
         """ctx.reply, but ephemeral (visible only to the invoker) when the
         command was invoked via / rather than the text prefix."""
-        kwargs.setdefault("ephemeral", ctx.interaction is not None)
-        return await ctx.reply(*args, **kwargs)
+        return await reply_ephemeral_aware(ctx, *args, **kwargs)
 
     @staticmethod
     def _line(command: commands.Command) -> str:

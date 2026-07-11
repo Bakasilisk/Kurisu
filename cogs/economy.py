@@ -1,14 +1,13 @@
-import os
 import random
 import time
 
 import discord
 from discord.ext import commands
 
-from .management import actor_outranks, cog_enabled, has_permissions_or_owner
-from .storage import load_json, save_json_atomic
+from .management import cog_enabled, common_error_reply, has_permissions_or_owner, rank_of, require_outranks
+from .storage import data_path, load_json, save_json_atomic
 
-ECONOMY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "economy.json")
+ECONOMY_FILE = data_path("economy.json")
 
 PAYDAY_AMOUNT = 120
 PAYDAY_COOLDOWN_SECONDS = 12 * 60 * 60
@@ -37,19 +36,30 @@ class Economy(commands.Cog):
     def _guild_bank(self, guild_id) -> dict:
         return self.data.setdefault(str(guild_id), {})
 
+    def _account(self, guild_id, user_id) -> dict:
+        """Mutating lookup: returns the user's entry in the guild bank, creating
+        the guild bank and/or the entry (with default balance/last_payday) if
+        missing. Use for commands that go on to modify the returned dict."""
+        return self._guild_bank(guild_id).setdefault(str(user_id), {"balance": 0, "last_payday": 0.0})
+
+    def _account_readonly(self, guild_id, user_id) -> dict:
+        """Non-mutating lookup: same default entry as `_account`, but never
+        creates/persists a guild bank or account entry. Use for read-only
+        commands (e.g. `balance`) so looking someone up doesn't start
+        persisting an empty account for them."""
+        return self.data.get(str(guild_id), {}).get(str(user_id), {"balance": 0, "last_payday": 0.0})
+
     async def cog_check(self, ctx):
         return ctx.guild is None or cog_enabled(self.bot, ctx.guild.id, "economy")
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MemberNotFound):
             await ctx.reply("I couldn't find that member.")
-        elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
-            await ctx.reply(str(error) or "Invalid or missing argument.")
-        elif isinstance(error, commands.MissingPermissions):
-            await ctx.reply("You don't have permission to do that.")
         elif isinstance(error, commands.CheckAnyFailure):
+            # A CheckFailure sibling, not a MissingPermissions subclass — common_error_reply
+            # doesn't recognize it and would otherwise silently swallow it as a bare CheckFailure.
             await ctx.reply("You don't have permission to do that.")
-        elif isinstance(error, commands.CheckFailure):
+        elif await common_error_reply(ctx, error):
             return
         else:
             raise error
@@ -58,9 +68,7 @@ class Economy(commands.Cog):
     @commands.guild_only()
     async def payday(self, ctx):
         """Collect your payday bits (once every 12 hours)."""
-        guild_bank = self._guild_bank(ctx.guild.id)
-        user_id = str(ctx.author.id)
-        entry = guild_bank.setdefault(user_id, {"balance": 0, "last_payday": 0.0})
+        entry = self._account(ctx.guild.id, ctx.author.id)
 
         now = time.time()
         remaining = PAYDAY_COOLDOWN_SECONDS - (now - entry["last_payday"])
@@ -74,8 +82,8 @@ class Economy(commands.Cog):
         entry["last_payday"] = now
         self._save()
 
-        sorted_members = sorted(guild_bank.items(), key=lambda kv: kv[1]["balance"], reverse=True)
-        position = next(i for i, (uid, _) in enumerate(sorted_members, start=1) if uid == user_id)
+        guild_bank = self._guild_bank(ctx.guild.id)
+        position = rank_of(guild_bank.items(), lambda kv: kv[1]["balance"], str(ctx.author.id))
 
         embed = discord.Embed(
             title="💰 Payday",
@@ -91,8 +99,7 @@ class Economy(commands.Cog):
     async def balance(self, ctx, member: discord.Member = None):
         """Show your (or another member's) bits balance."""
         member = member or ctx.author
-        guild_bank = self.data.get(str(ctx.guild.id), {})
-        entry = guild_bank.get(str(member.id), {"balance": 0, "last_payday": 0.0})
+        entry = self._account_readonly(ctx.guild.id, member.id)
         await ctx.reply(f"{member.mention} has **{entry['balance']} bits**.")
 
     @commands.command(name="richest")
@@ -124,14 +131,12 @@ class Economy(commands.Cog):
     @commands.guild_only()
     async def setbits(self, ctx, member: discord.Member, amount: int):
         """Set a member's bits balance."""
-        if not await actor_outranks(self.bot, ctx, member):
-            await ctx.reply("You can't set bits for someone with an equal or higher role than you.")
+        if not await require_outranks(self.bot, ctx, member, "set bits for"):
             return
         if amount < 0:
             await ctx.reply("Amount can't be negative.")
             return
-        guild_bank = self._guild_bank(ctx.guild.id)
-        entry = guild_bank.setdefault(str(member.id), {"balance": 0, "last_payday": 0.0})
+        entry = self._account(ctx.guild.id, member.id)
         entry["balance"] = amount
         self._save()
         await ctx.reply(f"✅ Set {member.mention}'s balance to **{amount} bits**.")
@@ -150,13 +155,12 @@ class Economy(commands.Cog):
             await ctx.reply("You can't give bits to a bot.")
             return
 
-        guild_bank = self._guild_bank(ctx.guild.id)
-        sender = guild_bank.setdefault(str(ctx.author.id), {"balance": 0, "last_payday": 0.0})
+        sender = self._account(ctx.guild.id, ctx.author.id)
         if sender["balance"] < amount:
             await ctx.reply(f"You don't have enough bits (you have {sender['balance']}).")
             return
 
-        receiver = guild_bank.setdefault(str(member.id), {"balance": 0, "last_payday": 0.0})
+        receiver = self._account(ctx.guild.id, member.id)
         sender["balance"] -= amount
         receiver["balance"] += amount
         self._save()
@@ -173,8 +177,7 @@ class Economy(commands.Cog):
             await ctx.reply(f"Maximum bet is {COINFLIP_MAX_BET} bits.")
             return
 
-        guild_bank = self._guild_bank(ctx.guild.id)
-        entry = guild_bank.setdefault(str(ctx.author.id), {"balance": 0, "last_payday": 0.0})
+        entry = self._account(ctx.guild.id, ctx.author.id)
         if entry["balance"] < amount:
             await ctx.reply(f"You don't have enough bits (you have {entry['balance']}).")
             return

@@ -7,14 +7,14 @@ from datetime import timedelta
 import discord
 from discord.ext import commands, tasks
 
-from .management import cog_enabled, has_permissions_or_owner
-from .storage import load_json, save_json_atomic
+from .management import cog_enabled, has_permissions_or_owner, reply_ephemeral_aware
+from .storage import backfill_defaults, data_path, load_json, save_json_atomic
 
 logger = logging.getLogger(__name__)
 
-PALANTIR_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "palantir.json")
-MESSAGES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "palantir_messages.json")
-ATTACHMENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "palantir_attachments")
+PALANTIR_FILE = data_path("palantir.json")
+MESSAGES_FILE = data_path("palantir_messages.json")
+ATTACHMENTS_DIR = data_path("palantir_attachments")
 
 # Message-content cache bounds (module-level constants, no config command — repo
 # convention is to defer tunable knobs until real usage justifies them).
@@ -90,13 +90,10 @@ class Palantir(commands.Cog):
         save_json_atomic(PALANTIR_FILE, self.config)
 
     def _guild_conf(self, guild_id: int) -> dict:
-        guild_conf = self.config.setdefault(str(guild_id), _default_guild_config())
+        guild_conf = self.config.setdefault(str(guild_id), {})
         # Backfill any keys missing from a config persisted by an earlier schema,
         # so accessing a newer key never raises a bare KeyError.
-        defaults = _default_guild_config()
-        for key, value in defaults.items():
-            guild_conf.setdefault(key, value)
-        return guild_conf
+        return backfill_defaults(guild_conf, _default_guild_config())
 
     def _should_log(self, guild: discord.Guild, category: str) -> bool:
         """Whether an event in `category` should be logged for this guild at
@@ -420,6 +417,32 @@ class Palantir(commands.Cog):
 
     # --- Message listeners --------------------------------------------------
 
+    def _resolve_cached(
+        self, guild_id: int, message_id: int, cached_msg: discord.Message | None
+    ) -> dict:
+        """Best-effort resolution of a message's author/content/attachments:
+        Discord's own connection cache (`cached_msg`, may already be None by
+        the time a raw event fires) first, falling back to palantir's own
+        on-disk cache, falling back to nothing. Returns a superset dict —
+        callers pick out whichever fields they need."""
+        cached = self._cache_get(guild_id, message_id)
+        author = cached_msg.author if cached_msg else None
+        content = (cached_msg.content if cached_msg else None) or (
+            cached.get("content") if cached else None
+        )
+        author_id = author.id if author is not None else (cached.get("author_id") if cached else None)
+        attachment_urls = (
+            [a.url for a in cached_msg.attachments]
+            if cached_msg and cached_msg.attachments
+            else (cached.get("attachment_urls", []) if cached else [])
+        )
+        return {
+            "content": content,
+            "author": author,
+            "author_id": author_id,
+            "attachment_urls": attachment_urls,
+        }
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         """Cache ingest only — not itself a log event. Stores content and
@@ -458,17 +481,15 @@ class Palantir(commands.Cog):
             return
 
         cached_msg = payload.cached_message
-        cached = self._cache_get(guild.id, payload.message_id)
-        before_content = (cached_msg.content if cached_msg else None) or (
-            cached.get("content") if cached else None
-        )
+        resolved = self._resolve_cached(guild.id, payload.message_id, cached_msg)
+        before_content = resolved["content"]
         # Refresh the stored content regardless, so a later delete shows the
         # latest version — then skip the embed if nothing actually changed.
         await self._update_cached_content(guild.id, payload.message_id, after_content)
         if (before_content or "") == (after_content or ""):
             return
 
-        author = cached_msg.author if cached_msg else None
+        author = resolved["author"]
         if author is None and author_data.get("id"):
             author = guild.get_member(int(author_data["id"]))
         if author is not None:
@@ -508,17 +529,13 @@ class Palantir(commands.Cog):
             return
 
         cached_msg = payload.cached_message
-        cached = self._cache_get(guild.id, payload.message_id)
-        author = cached_msg.author if cached_msg else None
-        author_id = author.id if author is not None else (cached.get("author_id") if cached else None)
+        resolved = self._resolve_cached(guild.id, payload.message_id, cached_msg)
+        author = resolved["author"]
+        author_id = resolved["author_id"]
         if author is None and author_id is not None:
             author = guild.get_member(author_id)
-        content = (cached_msg.content if cached_msg else None) or (cached.get("content") if cached else None)
-        attachment_urls = (
-            [a.url for a in cached_msg.attachments]
-            if cached_msg and cached_msg.attachments
-            else (cached.get("attachment_urls", []) if cached else [])
-        )
+        content = resolved["content"]
+        attachment_urls = resolved["attachment_urls"]
 
         guild_conf = self._guild_conf(guild.id)
         files = (
@@ -732,16 +749,26 @@ class Palantir(commands.Cog):
             return f"ID `{target.id}`"
         return str(target)
 
-    async def _log_audit_action(self, guild: discord.Guild, entry: discord.AuditLogEntry, title: str) -> None:
-        embed = discord.Embed(title=title, color=CATEGORY_COLORS["modactions"], timestamp=discord.utils.utcnow())
+    def _add_actor_fields(
+        self, embed: discord.Embed, entry: discord.AuditLogEntry, *, include_reason: bool = True
+    ) -> None:
+        """Target + Moderator fields shared by every audit-log modaction embed.
+        Also adds the conditional Reason field when it directly follows with no
+        category-specific fields in between (the default); pass
+        include_reason=False and add Reason manually afterward when other
+        fields (Until, Roles Added/Removed, ...) need to come first."""
         embed.add_field(name="Target", value=self._audit_target_label(entry), inline=False)
         moderator = entry.user
         embed.add_field(
             name="Moderator", value=f"{moderator.mention} ({moderator})" if moderator else "Unknown",
             inline=False,
         )
-        if entry.reason:
+        if include_reason and entry.reason:
             embed.add_field(name="Reason", value=entry.reason[:1024], inline=False)
+
+    async def _log_audit_action(self, guild: discord.Guild, entry: discord.AuditLogEntry, title: str) -> None:
+        embed = discord.Embed(title=title, color=CATEGORY_COLORS["modactions"], timestamp=discord.utils.utcnow())
+        self._add_actor_fields(embed, entry)
         await self._log(guild, "modactions", embed)
 
     async def _handle_member_update_audit(self, guild: discord.Guild, entry: discord.AuditLogEntry) -> None:
@@ -761,12 +788,7 @@ class Palantir(commands.Cog):
         applied = after_until is not None and after_until > now
         title = "🔇 Member Timed Out" if applied else "🔊 Timeout Removed"
         embed = discord.Embed(title=title, color=CATEGORY_COLORS["modactions"], timestamp=now)
-        embed.add_field(name="Target", value=self._audit_target_label(entry), inline=False)
-        moderator = entry.user
-        embed.add_field(
-            name="Moderator", value=f"{moderator.mention} ({moderator})" if moderator else "Unknown",
-            inline=False,
-        )
+        self._add_actor_fields(embed, entry, include_reason=False)
         if applied:
             embed.add_field(name="Until", value=discord.utils.format_dt(after_until, style="R"), inline=False)
         if entry.reason:
@@ -787,12 +809,7 @@ class Palantir(commands.Cog):
             title="🔧 Member Roles Updated (by moderator)", color=CATEGORY_COLORS["modactions"],
             timestamp=discord.utils.utcnow(),
         )
-        embed.add_field(name="Target", value=self._audit_target_label(entry), inline=False)
-        moderator = entry.user
-        embed.add_field(
-            name="Moderator", value=f"{moderator.mention} ({moderator})" if moderator else "Unknown",
-            inline=False,
-        )
+        self._add_actor_fields(embed, entry, include_reason=False)
         if added:
             embed.add_field(name="Roles Added", value=", ".join(f"<@&{r.id}>" for r in added)[:1024], inline=False)
         if removed:
@@ -1006,8 +1023,7 @@ class Palantir(commands.Cog):
     async def _reply(ctx, *args, **kwargs):
         """ctx.reply, but ephemeral (visible only to the invoker) when the
         command was invoked via / rather than the text prefix."""
-        kwargs.setdefault("ephemeral", ctx.interaction is not None)
-        return await ctx.reply(*args, **kwargs)
+        return await reply_ephemeral_aware(ctx, *args, **kwargs)
 
     def _status_embed(self, guild: discord.Guild, guild_conf: dict) -> discord.Embed:
         channel = guild.get_channel(guild_conf["log_channel_id"]) if guild_conf["log_channel_id"] else None

@@ -1,19 +1,25 @@
 import logging
-import os
 import re
 from datetime import timedelta
 
 import discord
 from discord.ext import commands
 
-from .management import actor_outranks, cog_enabled, has_permissions_or_owner
-from .storage import load_json, save_json_atomic
+from .management import (
+    actor_outranks,
+    bot_outranks,
+    cog_enabled,
+    common_error_reply,
+    has_permissions_or_owner,
+    reply_ephemeral_aware,
+)
+from .storage import data_path, load_json, save_json_atomic
 
 logger = logging.getLogger(__name__)
 
-WARNINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "warnings.json")
-LOCKS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "channel_locks.json")
-MODLOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mod_log.json")
+WARNINGS_FILE = data_path("warnings.json")
+LOCKS_FILE = data_path("channel_locks.json")
+MODLOG_FILE = data_path("mod_log.json")
 
 DURATION_RE = re.compile(r"^(\d+)([smhd])$")
 DURATION_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
@@ -80,7 +86,7 @@ class Moderation(commands.Cog):
         bypass the actor check; the bot's own role limit always applies."""
         if not await actor_outranks(self.bot, ctx, member):
             return f"You can't {verb} someone with an equal or higher role than you."
-        if member.top_role >= ctx.guild.me.top_role:
+        if not bot_outranks(ctx.guild, member):
             return f"My role isn't high enough to {verb} that member."
         return None
 
@@ -88,8 +94,7 @@ class Moderation(commands.Cog):
     async def _reply(ctx, *args, **kwargs):
         """ctx.reply, but ephemeral (visible only to the invoker) when the
         command was invoked via / rather than the text prefix."""
-        kwargs.setdefault("ephemeral", ctx.interaction is not None)
-        return await ctx.reply(*args, **kwargs)
+        return await reply_ephemeral_aware(ctx, *args, **kwargs)
 
     async def _log_action(
         self, ctx, action: str, color: discord.Color, *, target=None, reason=None, **fields
@@ -163,19 +168,19 @@ class Moderation(commands.Cog):
         await self._reply(ctx, "📋 Mod-log disabled." if had_one else "Mod-log was not enabled.")
 
     async def cog_command_error(self, ctx, error):
-        if isinstance(error, (commands.MissingPermissions, commands.CheckAnyFailure)):
-            await self._reply(ctx, "You don't have permission to do that.")
-        elif isinstance(error, commands.BotMissingPermissions):
-            await self._reply(ctx, "I don't have permission to do that.")
-        elif isinstance(error, commands.MemberNotFound):
+        if isinstance(error, commands.MemberNotFound):
             await self._reply(ctx, "I couldn't find that member.")
         elif isinstance(error, commands.UserNotFound):
             await self._reply(ctx, "I couldn't find that user.")
         elif isinstance(error, commands.ChannelNotFound):
             await self._reply(ctx, "I couldn't find that channel.")
-        elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
-            await self._reply(ctx, str(error) or "Invalid or missing argument.")
-        elif isinstance(error, commands.CheckFailure):
+        elif isinstance(error, commands.CheckAnyFailure):
+            # CheckAnyFailure (from has_permissions_or_owner's check_any) is a
+            # CheckFailure sibling, not a MissingPermissions subclass — common_error_reply
+            # wouldn't recognize it and would silently swallow it via the trailing
+            # CheckFailure branch. Keep it visible, matching the old combined branch.
+            await self._reply(ctx, "You don't have permission to do that.")
+        elif await common_error_reply(ctx, error, reply=lambda text: self._reply(ctx, text)):
             return
         else:
             raise error

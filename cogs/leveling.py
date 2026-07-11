@@ -1,5 +1,5 @@
 import asyncio
-import os
+import copy
 import random
 import time
 from datetime import datetime, time as dt_time, timezone
@@ -7,11 +7,11 @@ from datetime import datetime, time as dt_time, timezone
 import discord
 from discord.ext import commands, tasks
 
-from .management import actor_outranks, cog_enabled, has_permissions_or_owner
-from .storage import load_json, save_json_atomic
+from .management import cog_enabled, common_error_reply, has_permissions_or_owner, rank_of, require_outranks
+from .storage import data_path, load_json, save_json_atomic
 
-XP_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "xp.json")
-MESSAGES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "messages.json")
+XP_FILE = data_path("xp.json")
+MESSAGES_FILE = data_path("messages.json")
 
 XP_MIN = 15
 XP_MAX = 25
@@ -62,15 +62,12 @@ class Leveling(commands.Cog):
                 save_json_atomic(MESSAGES_FILE, self._messages_snapshot())
 
     def _snapshot(self) -> dict:
-        """A shallow copy safe to hand to a background thread for serialization."""
-        return {guild_id: dict(members) for guild_id, members in self.xp.items()}
+        """A deep copy safe to hand to a background thread for serialization."""
+        return copy.deepcopy(self.xp)
 
     def _messages_snapshot(self) -> dict:
-        """A shallow copy of messages for background serialization."""
-        return {
-            guild_id: {user_id: dict(entry) for user_id, entry in members.items()}
-            for guild_id, members in self.messages.items()
-        }
+        """A deep copy of messages for background serialization."""
+        return copy.deepcopy(self.messages)
 
     def _today_str(self) -> str:
         """Return today's date in YYYY-MM-DD format (UTC)."""
@@ -89,11 +86,9 @@ class Leveling(commands.Cog):
     async def _flush_xp(self):
         async with self._xp_lock:
             if self._dirty:
-                self._dirty = False
-                await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
+                await self._save_with_dirty_flag("_dirty", XP_FILE, self._snapshot())
             if self._messages_dirty:
-                self._messages_dirty = False
-                await asyncio.to_thread(save_json_atomic, MESSAGES_FILE, self._messages_snapshot())
+                await self._save_with_dirty_flag("_messages_dirty", MESSAGES_FILE, self._messages_snapshot())
 
     @_flush_xp.before_loop
     async def _before_flush_xp(self):
@@ -113,14 +108,14 @@ class Leveling(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def cog_command_error(self, ctx, error):
-        if isinstance(error, commands.MissingPermissions):
-            await ctx.reply("You don't have permission to do that.")
-        elif isinstance(error, commands.MemberNotFound):
+        if isinstance(error, commands.MemberNotFound):
             await ctx.reply("I couldn't find that member.")
-        elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
-            await ctx.reply(str(error) or "Invalid or missing argument.")
         elif isinstance(error, commands.CheckAnyFailure):
+            # A CheckFailure sibling, not a MissingPermissions subclass — common_error_reply
+            # doesn't recognize it and would otherwise silently swallow it as a bare CheckFailure.
             await ctx.reply("You don't have permission to do that.")
+        elif await common_error_reply(ctx, error):
+            return
         else:
             raise error
 
@@ -190,13 +185,7 @@ class Leveling(commands.Cog):
         level_floor = total_xp_for_level(current_level)
         level_ceiling = total_xp_for_level(current_level + 1)
 
-        position = None
-        if xp_items:
-            sorted_members = sorted(xp_items, key=lambda kv: kv[1], reverse=True)
-            position = next(
-                (i for i, (uid, _) in enumerate(sorted_members, start=1) if uid == member_id),
-                None,
-            )
+        position = rank_of(xp_items, key=lambda kv: kv[1], target_id=member_id)
 
         embed = discord.Embed(title=f"{member.display_name}'s Rank", color=discord.Color.gold())
         embed.set_thumbnail(url=member.display_avatar.url)
@@ -219,10 +208,8 @@ class Leveling(commands.Cog):
                 await ctx.reply("Nobody has earned any XP yet.")
                 return
             xp_items = list(guild_xp.items())
-            guild_messages = self.messages.get(str(ctx.guild.id), {})
 
         sorted_members = sorted(xp_items, key=lambda kv: kv[1], reverse=True)[:top]
-        today = self._today_str()
 
         embed = discord.Embed(
             title=f"🏆 {ctx.guild.name} Leaderboard",
@@ -231,8 +218,7 @@ class Leveling(commands.Cog):
         for i, (user_id, xp_amount) in enumerate(sorted_members, start=1):
             member = ctx.guild.get_member(int(user_id))
             name = member.display_name if member else f"Unknown ({user_id})"
-            user_messages = guild_messages.get(user_id, {})
-            messages_today = user_messages.get("count", 0) if user_messages.get("date") == today else 0
+            messages_today = self._messages_today_unsafe(ctx.guild.id, user_id)
             embed.add_field(
                 name=f"#{i} **{name}**",
                 value=f"Level {level_from_xp(xp_amount)} | {xp_amount} XP | {messages_today} msgs today",
@@ -245,8 +231,7 @@ class Leveling(commands.Cog):
     @commands.guild_only()
     async def resetxp(self, ctx, member: discord.Member):
         """Reset a member's XP and level."""
-        if not await actor_outranks(self.bot, ctx, member):
-            await ctx.reply("You can't reset XP for someone with an equal or higher role than you.")
+        if not await require_outranks(self.bot, ctx, member, "reset XP for"):
             return
         async with self._xp_lock:
             guild_xp = self.xp.get(str(ctx.guild.id), {})
@@ -262,8 +247,7 @@ class Leveling(commands.Cog):
     @commands.guild_only()
     async def setxp(self, ctx, member: discord.Member, amount: int):
         """Set a member's total XP."""
-        if not await actor_outranks(self.bot, ctx, member):
-            await ctx.reply("You can't set XP for someone with an equal or higher role than you.")
+        if not await require_outranks(self.bot, ctx, member, "set XP for"):
             return
         if amount < 0:
             await ctx.reply("Amount can't be negative.")
