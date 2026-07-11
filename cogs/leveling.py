@@ -97,7 +97,12 @@ class Leveling(commands.Cog):
             self._last_monthly_reset = today
             async with self._xp_lock:
                 self.messages.clear()
-                await asyncio.to_thread(save_json_atomic, MESSAGES_FILE, {})
+                try:
+                    await asyncio.to_thread(save_json_atomic, MESSAGES_FILE, {})
+                    self._messages_dirty = False
+                except Exception:
+                    self._messages_dirty = True
+                    raise
 
     @_monthly_reset.before_loop
     async def _before_monthly_reset(self):
@@ -202,17 +207,19 @@ class Leveling(commands.Cog):
     async def leaderboard(self, ctx, top: int = 10):
         """Show the server's XP leaderboard."""
         top = max(1, min(top, 25))
-        guild_xp = self.xp.get(str(ctx.guild.id), {})
-        if not guild_xp:
-            await ctx.reply("Nobody has earned any XP yet.")
-            return
 
-        sorted_members = sorted(guild_xp.items(), key=lambda kv: kv[1], reverse=True)[:top]
-        lines = []
-        for i, (user_id, xp_amount) in enumerate(sorted_members, start=1):
-            member = ctx.guild.get_member(int(user_id))
-            name = member.mention if member else f"<@{user_id}>"
-            lines.append(f"**#{i}** {name} — Level {level_from_xp(xp_amount)} ({xp_amount} XP)")
+        async with self._xp_lock:
+            guild_xp = self.xp.get(str(ctx.guild.id), {})
+            if not guild_xp:
+                await ctx.reply("Nobody has earned any XP yet.")
+                return
+
+            sorted_members = sorted(guild_xp.items(), key=lambda kv: kv[1], reverse=True)[:top]
+            lines = []
+            for i, (user_id, xp_amount) in enumerate(sorted_members, start=1):
+                member = ctx.guild.get_member(int(user_id))
+                name = member.mention if member else f"<@{user_id}>"
+                lines.append(f"**#{i}** {name} — Level {level_from_xp(xp_amount)} ({xp_amount} XP)")
 
         embed = discord.Embed(
             title=f"🏆 {ctx.guild.name} Leaderboard",
@@ -232,8 +239,12 @@ class Leveling(commands.Cog):
         async with self._xp_lock:
             guild_xp = self.xp.get(str(ctx.guild.id), {})
             had_xp = guild_xp.pop(str(member.id), None) is not None
-            self._dirty = False
-            await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
+            try:
+                await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
+                self._dirty = False
+            except Exception:
+                self._dirty = True
+                raise
         if had_xp:
             await ctx.reply(f"🧹 Reset XP for {member.mention}")
         else:
@@ -253,8 +264,12 @@ class Leveling(commands.Cog):
         async with self._xp_lock:
             guild_xp = self.xp.setdefault(str(ctx.guild.id), {})
             guild_xp[str(member.id)] = amount
-            self._dirty = False
-            await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
+            try:
+                await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
+                self._dirty = False
+            except Exception:
+                self._dirty = True
+                raise
         await ctx.reply(f"✅ Set {member.mention}'s XP to **{amount}** (Level {level_from_xp(amount)}).")
 
 
