@@ -88,8 +88,19 @@ class Management(commands.Cog):
 
     async def _apply_presence(self):
         text = self.config["global"]["presence"]
-        if text:
-            await self.bot.change_presence(activity=discord.Game(name=text))
+        activity = discord.Game(name=text) if text else None
+        # Safe if the client isn't fully connected yet (e.g. on cog_load during
+        # startup, before the gateway is ready) — change_presence just no-ops or
+        # raises, and either way a missed apply is picked up again in on_ready.
+        try:
+            await self.bot.change_presence(activity=activity)
+        except (discord.HTTPException, RuntimeError):
+            pass
+
+    async def cog_load(self):
+        # Re-apply persisted presence whenever the cog loads (including a bare
+        # `.cog reload management`), not only on a full startup's on_ready.
+        await self._apply_presence()
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -226,8 +237,15 @@ class Management(commands.Cog):
 
     @commands.command(name="presence")
     @commands.is_owner()
-    async def presence(self, ctx, *, text: str):
-        """Set the bot's "Playing ..." status, persisted across restarts."""
+    async def presence(self, ctx, *, text: str = None):
+        """Set the bot's "Playing ..." status, persisted across restarts.
+        Use `.presence` with no text (or `.presence clear`) to revert to the default."""
+        if text is None or text.strip().lower() == "clear":
+            self.config["global"]["presence"] = None
+            self._save()
+            await self._apply_presence()
+            await ctx.reply("🎮 Presence cleared.")
+            return
         self.config["global"]["presence"] = text
         self._save()
         await self._apply_presence()
