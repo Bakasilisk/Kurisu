@@ -219,13 +219,17 @@ class Leveling(commands.Cog):
                 await ctx.reply("Nobody has earned any XP yet.")
                 return
             xp_items = list(guild_xp.items())
+            guild_messages = self.messages.get(str(ctx.guild.id), {})
 
         sorted_members = sorted(xp_items, key=lambda kv: kv[1], reverse=True)[:top]
         lines = []
+        today = self._today_str()
         for i, (user_id, xp_amount) in enumerate(sorted_members, start=1):
             member = ctx.guild.get_member(int(user_id))
             name = member.mention if member else f"<@{user_id}>"
-            lines.append(f"**#{i}** {name} — Level {level_from_xp(xp_amount)} ({xp_amount} XP)")
+            user_messages = guild_messages.get(user_id, {})
+            messages_today = user_messages.get("count", 0) if user_messages.get("date") == today else 0
+            lines.append(f"**#{i}** {name} — Level {level_from_xp(xp_amount)} ({xp_amount} XP, {messages_today} msgs today)")
 
         embed = discord.Embed(
             title=f"🏆 {ctx.guild.name} Leaderboard",
