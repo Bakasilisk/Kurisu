@@ -24,6 +24,11 @@ watchdog.json
 # Verification data
 verification.json
 
+# Palantir data
+palantir.json
+palantir_messages.json
+palantir_attachments/
+
 # Logs
 logs/
 

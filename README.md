@@ -69,6 +69,23 @@ lockdown state, so a restart mid-lockdown resumes correctly) is persisted to `wa
 Known v1 limitations: webhook messages are safely ignored rather than acted upon (a webhook
 can't be timed out); detection thresholds are fixed constants, not yet per-server tunable.
 
+**Palantir** — total surveillance logging: every join/leave, message edit/delete, role/nickname
+change, mod action, channel/role/server-structure change, voice move, and invite create/use is
+streamed as an embed to a configured log channel, split into independently mutable categories:
+`members`, `messages`, `roles`, `voice`, `modactions`, `invites`, `server`. Message edits/deletes
+show the pre-change content from palantir's own disk-backed cache (`palantir_messages.json`,
+capped at 20,000 messages and 14 days per server, oldest evicted/expired automatically — not a
+config option). Ban/kick/timeout/role-grant actions are attributed to the responsible moderator
+by name via the audit log (requires the *View Audit Log* permission); ban/unban still log
+(unattributed) without it. Attachment archiving is a runtime toggle (`palantir archive on|off`,
+default off): when on, attached files are downloaded to `palantir_attachments/` on post and
+re-uploaded on delete so they survive Discord's CDN URL expiry, instead of a possibly-expired
+URL.
+
+Commands (all require `Manage Server`): `palantir`/`palantir status`, `palantir setchannel
+#channel`, `palantir disable`, `palantir mute/unmute <category>`, `palantir archive <on|off>`.
+Config is persisted to `palantir.json`.
+
 **Help** — `.help`/`/help` lists every command you can currently use, grouped by cog, with a
 one-line description each. Slash replies are ephemeral; `.` replies are public.
 
@@ -90,8 +107,10 @@ to capture the terminal output. This covers uncaught errors from commands and ev
 since discord.py routes those through the same logging system.
 
 All persisted data files (`warnings.json`, `channel_locks.json`, `mod_log.json`, `xp.json`,
-`economy.json`, `watchdog.json`, `management.json`, `messages.json`) are created automatically on first use — no manual setup
-needed.
+`economy.json`, `watchdog.json`, `management.json`, `messages.json`, `palantir.json`,
+`palantir_messages.json`) are created automatically on first use — no manual setup needed.
+Palantir additionally stores archived attachment bytes under `palantir_attachments/` when
+archiving is turned on.
 
 ## Setup Instructions
 
@@ -121,6 +140,8 @@ needed.
      - `Kick Members`, `Ban Members`, `Moderate Members`, `Manage Messages`, `Manage Channels`,
        `Manage Roles` (needed for the moderation commands, `lock`/`unlock`, and watchdog's
        lockdown mechanism)
+     - `View Audit Log` (needed for palantir to attribute ban/kick/timeout/role-grant actions
+       to the responsible moderator by name)
    - Copy the generated URL and open it in your browser to invite the bot to your server.
 
 4. **Run the Bot:**

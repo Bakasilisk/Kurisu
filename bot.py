@@ -62,6 +62,7 @@ INITIAL_EXTENSIONS = [
     "cogs.economy",
     "cogs.watchdog",
     "cogs.verification",
+    "cogs.palantir",
 ]
 
 _synced = False
