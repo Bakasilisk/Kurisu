@@ -1,0 +1,17 @@
+# Template systemd unit for running Kurisu in the background. See README.md's
+# "Running as a Background Service (systemd)" section for setup instructions.
+[Unit]
+Description=Kurisu Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/path/to/Kurisu
+ExecStart=/path/to/Kurisu/runbot.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

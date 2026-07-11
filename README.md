@@ -158,3 +158,41 @@ archiving is turned on.
      ```
    - Or use the bundled `./runbot.sh`, which does the venv setup, dependency install, and
      launch in one step.
+
+## Running as a Background Service (systemd)
+
+Running `python bot.py` or `./runbot.sh` directly ties the bot to your terminal session —
+it stops the moment you disconnect. To keep it running on a server after an SSH disconnect
+(and restart it automatically on crash or reboot), use the bundled `kurisu.service` template:
+
+1. **Copy the unit file and fill in the placeholders:**
+   ```bash
+   sudo cp kurisu.service /etc/systemd/system/kurisu.service
+   sudo nano /etc/systemd/system/kurisu.service
+   ```
+   Replace `youruser` with the user the bot should run as, and both `/path/to/Kurisu`
+   placeholders with the absolute path to this repo (e.g. `/home/youruser/Kurisu`).
+
+2. **Enable and start it:**
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now kurisu
+   ```
+   `enable --now` starts the bot immediately and again on every future boot.
+
+3. **Check status and logs:**
+   ```bash
+   sudo systemctl status kurisu
+   journalctl -u kurisu -f
+   ```
+   This doesn't change what's logged — `logs/kurisu.log` keeps being written exactly as
+   before. `journalctl -u kurisu -f` is just the equivalent of watching the console live,
+   in addition to (not instead of) `tail -f logs/kurisu.log`.
+
+4. **Manual control:**
+   ```bash
+   sudo systemctl restart kurisu
+   sudo systemctl stop kurisu
+   ```
+   `.shutdown` (owner-only, see Management below) exits the bot cleanly, so systemd won't
+   auto-restart it — only a crash triggers the automatic restart.
