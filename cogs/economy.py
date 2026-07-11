@@ -5,7 +5,7 @@ import time
 import discord
 from discord.ext import commands
 
-from .management import cog_enabled
+from .management import actor_outranks, cog_enabled, has_permissions_or_owner
 from .storage import load_json, save_json_atomic
 
 ECONOMY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "economy.json")
@@ -120,11 +120,11 @@ class Economy(commands.Cog):
         await ctx.reply(embed=embed)
 
     @commands.command(name="setbits")
-    @commands.check_any(commands.has_permissions(moderate_members=True), commands.is_owner())
+    @has_permissions_or_owner(moderate_members=True)
     @commands.guild_only()
     async def setbits(self, ctx, member: discord.Member, amount: int):
         """Set a member's bits balance."""
-        if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+        if not await actor_outranks(self.bot, ctx, member):
             await ctx.reply("You can't set bits for someone with an equal or higher role than you.")
             return
         if amount < 0:
