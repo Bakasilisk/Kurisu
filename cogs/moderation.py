@@ -268,6 +268,12 @@ class Moderation(commands.Cog):
     @commands.guild_only()
     async def warn(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         """Warn a member and record it."""
+        # Actor-only check: warning is local bookkeeping, not a Discord-side action, so
+        # there's no bot-role hierarchy constraint to enforce here.
+        if not await require_outranks(
+            self.bot, ctx, member, "warn", reply=lambda text: self._reply(ctx, text)
+        ):
+            return
         guild_warnings = self.warnings.setdefault(str(ctx.guild.id), {})
         member_warnings = guild_warnings.setdefault(str(member.id), [])
         member_warnings.append(
