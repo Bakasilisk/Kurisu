@@ -26,8 +26,9 @@ check it with `modlog`, and turn it off with `modlog disable` (all three require
 
 **Leveling** — members earn 15-25 XP per message (60s cooldown to prevent spam farming),
 with an announcement on level-up. Commands: `rank`/`level [member]` to view level/XP/server
-rank, `leaderboard`/`lb`/`top [count]` for the server's top members, and `resetxp <member>`
-(requires `Moderate Members`) to clear a member's progress. XP is persisted to `xp.json`.
+rank, `leaderboard`/`lb`/`top [count]` for the server's top members, `resetxp <member>`
+(requires `Moderate Members`) to clear a member's progress, and `setxp <member> <amount>`
+(requires `Moderate Members`) to set a member's XP directly. XP is persisted to `xp.json`.
 
 **Economy** — a simple bits currency. `payday` grants 120 bits once every 12 hours per member
 (tracked per server), showing the member's new balance and server rank on collection, or the

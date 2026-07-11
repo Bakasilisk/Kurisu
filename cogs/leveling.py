@@ -174,6 +174,24 @@ class Leveling(commands.Cog):
         else:
             await ctx.reply(f"{member.mention} has no XP to reset.")
 
+    @commands.command(name="setxp")
+    @commands.check_any(commands.has_permissions(moderate_members=True), commands.is_owner())
+    @commands.guild_only()
+    async def setxp(self, ctx, member: discord.Member, amount: int):
+        """Set a member's total XP."""
+        if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+            await ctx.reply("You can't set XP for someone with an equal or higher role than you.")
+            return
+        if amount < 0:
+            await ctx.reply("Amount can't be negative.")
+            return
+        guild_xp = self.xp.setdefault(str(ctx.guild.id), {})
+        guild_xp[str(member.id)] = amount
+        async with self._xp_lock:
+            self._dirty = False
+            await asyncio.to_thread(save_json_atomic, XP_FILE, self._snapshot())
+        await ctx.reply(f"✅ Set {member.mention}'s XP to **{amount}** (Level {level_from_xp(amount)}).")
+
 
 async def setup(bot):
     await bot.add_cog(Leveling(bot))
