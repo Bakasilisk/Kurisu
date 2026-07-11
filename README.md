@@ -142,9 +142,19 @@ can't be timed out); detection thresholds are fixed constants, not yet per-serve
 ### Palantir
 
 Total surveillance logging: every join/leave, message edit/delete, role/nickname change,
-mod action, channel/role/server-structure change, voice move, and invite create/use is
+mod action, channel/role/server-structure change, voice move, and invite create/delete is
 streamed as an embed to a configured log channel, split into independently mutable
-categories: `members`, `messages`, `roles`, `voice`, `modactions`, `invites`, `server`.
+categories:
+
+| Category | Covers |
+|---|---|
+| `members` | Joins (with account age and the invite used), leaves, nickname changes |
+| `messages` | Edits, deletes, and bulk deletes |
+| `roles` | Role create/delete/edit; a member's roles changing |
+| `voice` | Voice channel join/leave/move (mute/deafen ignored) |
+| `modactions` | Ban/kick/timeout and moderator role grants, attributed via audit log |
+| `invites` | Invite created/deleted |
+| `server` | Channel create/delete/edit, emoji changes, server settings |
 
 - Message edits/deletes show the pre-change content from palantir's own disk-backed cache,
   capped at 20,000 messages and 14 days per server, oldest evicted/expired automatically —
