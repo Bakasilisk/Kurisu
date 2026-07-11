@@ -17,6 +17,9 @@ xp.json
 # Watchdog data
 watchdog.json
 
+# Logs
+logs/
+
 # Python Cache
 __pycache__/
 *.pyc

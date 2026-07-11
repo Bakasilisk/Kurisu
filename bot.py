@@ -1,11 +1,31 @@
 import asyncio
 import logging
+import logging.handlers
 import os
 
 import discord
 from discord.ext import commands
 
 logger = logging.getLogger("kurisu")
+
+LOG_DIR = "logs"
+LOG_FILE = os.path.join(LOG_DIR, "kurisu.log")
+
+
+def setup_logging():
+    """Log to the console (as before) and additionally to a rotating logfile,
+    so errors can be reviewed without needing to capture the terminal output."""
+    discord.utils.setup_logging(root=True)
+
+    os.makedirs(LOG_DIR, exist_ok=True)
+    file_handler = logging.handlers.RotatingFileHandler(
+        LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    file_handler.setFormatter(
+        logging.Formatter("[{asctime}] [{levelname:<8}] {name}: {message}", "%Y-%m-%d %H:%M:%S", style="{")
+    )
+    logging.getLogger().addHandler(file_handler)
+
 
 # Simple loader for .env files without requiring external dependencies
 if os.path.exists(".env"):
@@ -62,7 +82,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    discord.utils.setup_logging(root=True)
+    setup_logging()
     if not TOKEN:
         logger.error("DISCORD_TOKEN environment variable is not set.")
         logger.error("Please create a .env file containing: DISCORD_TOKEN=your_token_here")

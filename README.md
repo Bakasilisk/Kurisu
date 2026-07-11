@@ -58,9 +58,13 @@ can't be timed out); detection thresholds are fixed constants, not yet per-serve
 The bot loads each cog independently at startup — if one fails to load, the failure is
 logged and the rest of the bot still starts.
 
+**Logging** — in addition to the console, everything is written to a rotating logfile at
+`logs/kurisu.log` (5 MB per file, 3 backups kept), so errors can be reviewed without needing
+to capture the terminal output. This covers uncaught errors from commands and events too,
+since discord.py routes those through the same logging system.
+
 All persisted data files (`warnings.json`, `channel_locks.json`, `mod_log.json`, `xp.json`,
-`watchdog.json`) are created automatically on first use — no manual setup needed, and
-they're already `.gitignore`d.
+`watchdog.json`) are created automatically on first use — no manual setup needed.
 
 ## Setup Instructions
 
