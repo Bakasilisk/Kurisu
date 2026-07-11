@@ -29,6 +29,11 @@ def parse_duration(text: str) -> timedelta:
     return timedelta(**{DURATION_UNITS[unit]: int(amount)})
 
 
+def mod_permissions(**perms):
+    """Like commands.has_permissions(**perms), but the bot owner always passes."""
+    return commands.check_any(commands.is_owner(), commands.has_permissions(**perms))
+
+
 def snapshot_overwrite(channel, target) -> dict | None:
     """Capture a channel's permission overwrite for a role/member as a JSON-safe dict,
     or None if no explicit overwrite currently exists for that target."""
@@ -70,13 +75,20 @@ class Moderation(commands.Cog):
         save_json_atomic(MODLOG_FILE, self.mod_log_channels)
 
     async def cog_check(self, ctx):
-        return ctx.guild is None or cog_enabled(self.bot, ctx.guild.id, "moderation")
+        if ctx.guild is None or await self.bot.is_owner(ctx.author):
+            return True
+        return cog_enabled(self.bot, ctx.guild.id, "moderation")
 
-    @staticmethod
-    def _hierarchy_error(ctx, member, verb: str) -> str | None:
+    async def _hierarchy_error(self, ctx, member, verb: str) -> str | None:
         """Return an error string if the actor or the bot can't act on `member`
-        by role hierarchy, else None. The guild owner bypasses the actor check."""
-        if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+        by role hierarchy, else None. The guild owner and the bot owner both
+        bypass the actor check; the bot's own role limit always applies."""
+        actor_ok = (
+            member.top_role < ctx.author.top_role
+            or ctx.author == ctx.guild.owner
+            or await self.bot.is_owner(ctx.author)
+        )
+        if not actor_ok:
             return f"You can't {verb} someone with an equal or higher role than you."
         if member.top_role >= ctx.guild.me.top_role:
             return f"My role isn't high enough to {verb} that member."
@@ -129,7 +141,7 @@ class Moderation(commands.Cog):
         invoke_without_command=True, fallback="show",
         description="Show the current mod-log configuration.",
     )
-    @commands.has_permissions(manage_guild=True)
+    @mod_permissions(manage_guild=True)
     @commands.guild_only()
     async def modlog(self, ctx):
         """Show the current mod-log configuration."""
@@ -143,7 +155,7 @@ class Moderation(commands.Cog):
             await self._reply(ctx, f"Mod-log actions are currently sent to {channel.mention}.")
 
     @modlog.command(name="set", description="Set the channel moderation actions are logged to.")
-    @commands.has_permissions(manage_guild=True)
+    @mod_permissions(manage_guild=True)
     @commands.guild_only()
     async def modlog_set(self, ctx, channel: discord.TextChannel):
         """Set the channel moderation actions are logged to."""
@@ -152,7 +164,7 @@ class Moderation(commands.Cog):
         await self._reply(ctx, f"📋 Mod-log channel set to {channel.mention}.")
 
     @modlog.command(name="disable", description="Stop logging moderation actions.")
-    @commands.has_permissions(manage_guild=True)
+    @mod_permissions(manage_guild=True)
     @commands.guild_only()
     async def modlog_disable(self, ctx):
         """Stop logging moderation actions."""
@@ -161,7 +173,7 @@ class Moderation(commands.Cog):
         await self._reply(ctx, "📋 Mod-log disabled." if had_one else "Mod-log was not enabled.")
 
     async def cog_command_error(self, ctx, error):
-        if isinstance(error, commands.MissingPermissions):
+        if isinstance(error, (commands.MissingPermissions, commands.CheckAnyFailure)):
             await self._reply(ctx, "You don't have permission to do that.")
         elif isinstance(error, commands.BotMissingPermissions):
             await self._reply(ctx, "I don't have permission to do that.")
@@ -179,12 +191,12 @@ class Moderation(commands.Cog):
             raise error
 
     @commands.hybrid_command(description="Kick a member from the server.")
-    @commands.has_permissions(kick_members=True)
+    @mod_permissions(kick_members=True)
     @commands.bot_has_permissions(kick_members=True)
     @commands.guild_only()
     async def kick(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         """Kick a member from the server."""
-        error = self._hierarchy_error(ctx, member, "kick")
+        error = await self._hierarchy_error(ctx, member, "kick")
         if error:
             await self._reply(ctx, error)
             return
@@ -193,12 +205,12 @@ class Moderation(commands.Cog):
         await self._log_action(ctx, "Member Kicked", discord.Color.orange(), target=member, reason=reason)
 
     @commands.hybrid_command(description="Ban a member from the server.")
-    @commands.has_permissions(ban_members=True)
+    @mod_permissions(ban_members=True)
     @commands.bot_has_permissions(ban_members=True)
     @commands.guild_only()
     async def ban(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         """Ban a member from the server."""
-        error = self._hierarchy_error(ctx, member, "ban")
+        error = await self._hierarchy_error(ctx, member, "ban")
         if error:
             await self._reply(ctx, error)
             return
@@ -207,7 +219,7 @@ class Moderation(commands.Cog):
         await self._log_action(ctx, "Member Banned", discord.Color.red(), target=member, reason=reason)
 
     @commands.hybrid_command(description="Unban a user by ID or exact username.")
-    @commands.has_permissions(ban_members=True)
+    @mod_permissions(ban_members=True)
     @commands.bot_has_permissions(ban_members=True)
     @commands.guild_only()
     async def unban(self, ctx, user: discord.User, *, reason: str = "No reason provided"):
@@ -217,14 +229,14 @@ class Moderation(commands.Cog):
         await self._log_action(ctx, "Member Unbanned", discord.Color.green(), target=user, reason=reason)
 
     @commands.hybrid_command(aliases=["mute"], description="Time out a member (e.g. 10m, 2h, 1d).")
-    @commands.has_permissions(moderate_members=True)
+    @mod_permissions(moderate_members=True)
     @commands.bot_has_permissions(moderate_members=True)
     @commands.guild_only()
     async def timeout(
         self, ctx, member: discord.Member, duration: str, *, reason: str = "No reason provided"
     ):
         """Time out a member for a given duration (e.g. 10m, 2h, 1d)."""
-        error = self._hierarchy_error(ctx, member, "time out")
+        error = await self._hierarchy_error(ctx, member, "time out")
         if error:
             await self._reply(ctx, error)
             return
@@ -240,7 +252,7 @@ class Moderation(commands.Cog):
         )
 
     @commands.hybrid_command(aliases=["unmute"], description="Remove an active timeout from a member.")
-    @commands.has_permissions(moderate_members=True)
+    @mod_permissions(moderate_members=True)
     @commands.bot_has_permissions(moderate_members=True)
     @commands.guild_only()
     async def untimeout(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
@@ -252,7 +264,7 @@ class Moderation(commands.Cog):
         )
 
     @commands.hybrid_command(description="Warn a member and record it.")
-    @commands.has_permissions(moderate_members=True)
+    @mod_permissions(moderate_members=True)
     @commands.guild_only()
     async def warn(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         """Warn a member and record it."""
@@ -281,7 +293,7 @@ class Moderation(commands.Cog):
         )
 
     @commands.hybrid_command(name="warnings", aliases=["warnlist"], description="List a member's warnings.")
-    @commands.has_permissions(moderate_members=True)
+    @mod_permissions(moderate_members=True)
     @commands.guild_only()
     async def warnings_(self, ctx, member: discord.Member):
         """List a member's warnings."""
@@ -302,7 +314,7 @@ class Moderation(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     @commands.hybrid_command(description="Clear all warnings for a member.")
-    @commands.has_permissions(moderate_members=True)
+    @mod_permissions(moderate_members=True)
     @commands.guild_only()
     async def clearwarnings(self, ctx, member: discord.Member):
         """Clear all warnings for a member."""
@@ -319,7 +331,7 @@ class Moderation(commands.Cog):
         aliases=["clear"],
         description="Bulk-delete messages in the current channel, optionally filtered by member.",
     )
-    @commands.has_permissions(manage_messages=True)
+    @mod_permissions(manage_messages=True)
     @commands.bot_has_permissions(manage_messages=True)
     @commands.guild_only()
     async def purge(self, ctx, amount: int, member: discord.Member | None = None):
@@ -356,7 +368,7 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(
         description="Set the slowmode delay (in seconds) for the current channel. 0 to disable."
     )
-    @commands.has_permissions(manage_channels=True)
+    @mod_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
     @commands.guild_only()
     async def slowmode(self, ctx, seconds: int):
@@ -375,7 +387,7 @@ class Moderation(commands.Cog):
         )
 
     @commands.hybrid_command(description="Prevent @everyone from sending messages in the current channel.")
-    @commands.has_permissions(manage_channels=True)
+    @mod_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_roles=True)
     @commands.guild_only()
     async def lock(self, ctx, *, reason: str = "No reason provided"):
@@ -399,7 +411,7 @@ class Moderation(commands.Cog):
         )
 
     @commands.hybrid_command(description="Allow @everyone to send messages in the current channel again.")
-    @commands.has_permissions(manage_channels=True)
+    @mod_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_roles=True)
     @commands.guild_only()
     async def unlock(self, ctx, *, reason: str = "No reason provided"):
