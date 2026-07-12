@@ -16,6 +16,7 @@ Command prefix is `.`.
   [Captions](#captions) ·
   [AI Detect](#ai-detect) ·
   [Trace Anime](#trace-anime) ·
+  [AniList](#anilist) ·
   [Help](#help) ·
   [Management](#management) ·
   [Logging & data files](#logging--data-files)
@@ -24,11 +25,11 @@ Command prefix is `.`.
 
 ## Features
 
-Moderation, palantir, management, help, captions, aidetect, and trace commands are also available
-as `/` slash commands with autocomplete descriptions; slash invocations reply ephemerally (visible
-only to the invoker) while `.` invocations reply publicly — except captions, aidetect, and trace,
-whose results always reply publicly regardless of invocation method. The other cogs are
-prefix-only.
+Moderation, palantir, management, help, captions, aidetect, trace, and anilist commands are also
+available as `/` slash commands with autocomplete descriptions; slash invocations reply ephemerally
+(visible only to the invoker) while `.` invocations reply publicly — except captions, aidetect,
+trace, and anilist, whose results always reply publicly regardless of invocation method. The other
+cogs are prefix-only.
 
 ### Triggers
 
@@ -246,6 +247,18 @@ episode, timestamp, similarity, a scene thumbnail, a muted preview clip when sma
 upload, and up to two runner-up matches; a match below 87% similarity is flagged as low
 confidence. Adult titles have their thumbnail/clip hidden outside age-restricted channels. Works
 anonymously; an optional `TRACE_MOE_API_KEY` in `.env` raises trace.moe's rate limit.
+
+### AniList
+
+| Command | Does |
+|---|---|
+| `anime <title>` | Look up an anime on AniList |
+| `manga <title>` | Look up a manga on AniList |
+
+Both take the rest of the message as the title, so multi-word titles need no quoting under `.`
+(e.g. `.anime steins gate`). Results (always posted publicly) show the title, score, format,
+episode/chapter count, status, genres, and cover art. Adult titles have their cover hidden outside
+age-restricted channels. No API key needed — AniList's GraphQL API is public and unauthenticated.
 
 ### Help
 

@@ -66,6 +66,7 @@ INITIAL_EXTENSIONS = [
     "cogs.captions",
     "cogs.aidetect",
     "cogs.trace",
+    "cogs.anilist",
 ]
 
 _synced = False
