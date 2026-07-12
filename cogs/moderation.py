@@ -3,6 +3,7 @@ import re
 from datetime import timedelta
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from .management import (
@@ -137,6 +138,7 @@ class Moderation(commands.Cog):
         invoke_without_command=True, fallback="show",
         description="Show the current mod-log configuration.",
     )
+    @app_commands.default_permissions(manage_guild=True)
     @has_permissions_or_owner(manage_guild=True)
     @commands.guild_only()
     async def modlog(self, ctx):
@@ -187,6 +189,7 @@ class Moderation(commands.Cog):
             raise error
 
     @commands.hybrid_command(description="Kick a member from the server.")
+    @app_commands.default_permissions(kick_members=True)
     @has_permissions_or_owner(kick_members=True)
     @commands.bot_has_permissions(kick_members=True)
     @commands.guild_only()
@@ -201,6 +204,7 @@ class Moderation(commands.Cog):
         await self._log_action(ctx, "Member Kicked", discord.Color.orange(), target=member, reason=reason)
 
     @commands.hybrid_command(description="Ban a member from the server.")
+    @app_commands.default_permissions(ban_members=True)
     @has_permissions_or_owner(ban_members=True)
     @commands.bot_has_permissions(ban_members=True)
     @commands.guild_only()
@@ -215,6 +219,7 @@ class Moderation(commands.Cog):
         await self._log_action(ctx, "Member Banned", discord.Color.red(), target=member, reason=reason)
 
     @commands.hybrid_command(description="Unban a user by ID or exact username.")
+    @app_commands.default_permissions(ban_members=True)
     @has_permissions_or_owner(ban_members=True)
     @commands.bot_has_permissions(ban_members=True)
     @commands.guild_only()
@@ -225,6 +230,7 @@ class Moderation(commands.Cog):
         await self._log_action(ctx, "Member Unbanned", discord.Color.green(), target=user, reason=reason)
 
     @commands.hybrid_command(aliases=["mute"], description="Time out a member (e.g. 10m, 2h, 1d).")
+    @app_commands.default_permissions(moderate_members=True)
     @has_permissions_or_owner(moderate_members=True)
     @commands.bot_has_permissions(moderate_members=True)
     @commands.guild_only()
@@ -248,6 +254,7 @@ class Moderation(commands.Cog):
         )
 
     @commands.hybrid_command(aliases=["unmute"], description="Remove an active timeout from a member.")
+    @app_commands.default_permissions(moderate_members=True)
     @has_permissions_or_owner(moderate_members=True)
     @commands.bot_has_permissions(moderate_members=True)
     @commands.guild_only()
@@ -264,6 +271,7 @@ class Moderation(commands.Cog):
         )
 
     @commands.hybrid_command(description="Warn a member and record it.")
+    @app_commands.default_permissions(moderate_members=True)
     @has_permissions_or_owner(moderate_members=True)
     @commands.guild_only()
     async def warn(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
@@ -299,6 +307,7 @@ class Moderation(commands.Cog):
         )
 
     @commands.hybrid_command(name="warnings", aliases=["warnlist"], description="List a member's warnings.")
+    @app_commands.default_permissions(moderate_members=True)
     @has_permissions_or_owner(moderate_members=True)
     @commands.guild_only()
     async def warnings_(self, ctx, member: discord.Member):
@@ -320,6 +329,7 @@ class Moderation(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     @commands.hybrid_command(description="Clear all warnings for a member.")
+    @app_commands.default_permissions(moderate_members=True)
     @has_permissions_or_owner(moderate_members=True)
     @commands.guild_only()
     async def clearwarnings(self, ctx, member: discord.Member):
@@ -343,6 +353,7 @@ class Moderation(commands.Cog):
         aliases=["clear"],
         description="Bulk-delete messages in the current channel, optionally filtered by member.",
     )
+    @app_commands.default_permissions(manage_messages=True)
     @has_permissions_or_owner(manage_messages=True)
     @commands.bot_has_permissions(manage_messages=True)
     @commands.guild_only()
@@ -380,6 +391,7 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(
         description="Set the slowmode delay (in seconds) for the current channel. 0 to disable."
     )
+    @app_commands.default_permissions(manage_channels=True)
     @has_permissions_or_owner(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
     @commands.guild_only()
@@ -399,6 +411,7 @@ class Moderation(commands.Cog):
         )
 
     @commands.hybrid_command(description="Prevent @everyone from sending messages in the current channel.")
+    @app_commands.default_permissions(manage_channels=True)
     @has_permissions_or_owner(manage_channels=True)
     @commands.bot_has_permissions(manage_roles=True)
     @commands.guild_only()
@@ -423,6 +436,7 @@ class Moderation(commands.Cog):
         )
 
     @commands.hybrid_command(description="Allow @everyone to send messages in the current channel again.")
+    @app_commands.default_permissions(manage_channels=True)
     @has_permissions_or_owner(manage_channels=True)
     @commands.bot_has_permissions(manage_roles=True)
     @commands.guild_only()

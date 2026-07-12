@@ -72,6 +72,9 @@ Auto-replies on every message:
   configured — so ephemeral slash actions are still traceable.
 - `lock`/`unlock` snapshot each channel's exact pre-lock permission state (persisted, so it
   survives restarts) and restore what was there before, rather than blindly resetting it.
+- The `/` versions of these commands are hidden from members who lack the required
+  permission, by default (Discord may still let a server admin re-enable a hidden command for
+  specific users/roles via Integrations).
 
 ### Leveling
 
@@ -117,6 +120,9 @@ and member joins/leaves — in a local SQLite database (`stats.db`, path configu
 | `stats growth [period]` | Joins/leaves/net alongside message activity | — |
 | `stats quietest [n]` | Least-active members | Manage Server |
 | `stats backfill [days]` | Seed history from existing channel messages | Manage Server |
+
+`n` (on `user`/`top`/`channels`/`voice`/`quietest`) controls how many rows to show — defaults
+to 5, capped at 25.
 
 `stats backfill` with no `days` scans the entire server — every readable text channel, full
 history — which is rate-limit-safe but can take a while on a large server; pass `days` to limit
@@ -327,6 +333,12 @@ Server admins (`Manage Server`):
 | Command | Does |
 |---|---|
 | `feature list/enable/disable <name>` | Soft-disable a cog's behavior in their own guild only |
+
+By default, Discord hides the `/` versions of the owner-only commands from anyone but a
+server Administrator, and the `feature` commands from anyone without `Manage Server` — as
+with moderation, this is a UI default a server admin can override in Integrations, and doesn't
+replace the bot-side check (only the actual bot owner can run the owner-only commands,
+regardless of who can see them in the picker).
 
 The bot loads each cog independently at startup — if one fails to load, the failure is
 logged and the rest of the bot still starts. Extensions unloaded via `.cog unload` stay

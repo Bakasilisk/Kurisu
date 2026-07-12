@@ -1,6 +1,7 @@
 import os
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from .storage import data_path, load_json, save_json_atomic
@@ -243,6 +244,7 @@ class Management(commands.Cog):
         name="cog", invoke_without_command=True, fallback="help",
         description="Manage loaded cogs (owner only).",
     )
+    @app_commands.default_permissions(administrator=True)
     @commands.is_owner()
     async def manage_cogs(self, ctx):
         """Manage loaded cogs."""
@@ -298,6 +300,7 @@ class Management(commands.Cog):
         await self._reply(ctx, embed=self._embed(f"🔁 Reloaded `{_to_short_name(name)}`."))
 
     @commands.hybrid_command(name="reloadall", description="Reload every loaded cog.")
+    @app_commands.default_permissions(administrator=True)
     @commands.is_owner()
     async def reloadall(self, ctx):
         """Reload every currently-loaded extension."""
@@ -313,6 +316,7 @@ class Management(commands.Cog):
             await self._reply(ctx, embed=self._embed(f"🔁 Reloaded {len(self.bot.extensions)} extension(s)."))
 
     @commands.hybrid_command(name="sync", description="Re-sync slash commands with Discord.")
+    @app_commands.default_permissions(administrator=True)
     @commands.is_owner()
     async def sync(self, ctx):
         """Re-sync slash commands with Discord."""
@@ -320,6 +324,7 @@ class Management(commands.Cog):
         await self._reply(ctx, embed=self._embed(f"🔄 Synced {len(synced)} slash command(s)."))
 
     @commands.hybrid_command(name="guilds", description="List the servers the bot is in.")
+    @app_commands.default_permissions(administrator=True)
     @commands.is_owner()
     async def guilds_cmd(self, ctx):
         """List every guild the bot is in."""
@@ -330,6 +335,7 @@ class Management(commands.Cog):
         await self._reply(ctx, embed=self._embed("\n".join(lines) or "Not in any guilds.", title="Guilds"))
 
     @commands.hybrid_command(name="leave", description="Leave this server, or another by ID.")
+    @app_commands.default_permissions(administrator=True)
     @commands.is_owner()
     async def leave(self, ctx, guild_id: str = None):
         """Leave a guild — the current one if no ID is given, otherwise the one with the
@@ -356,6 +362,7 @@ class Management(commands.Cog):
         await guild.leave()
 
     @commands.hybrid_command(name="presence", description="Set or clear the bot's status text.")
+    @app_commands.default_permissions(administrator=True)
     @commands.is_owner()
     async def presence(self, ctx, *, text: str = None):
         """Set the bot's "Playing ..." status, persisted across restarts.
@@ -372,6 +379,7 @@ class Management(commands.Cog):
         await self._reply(ctx, embed=self._embed(f"🎮 Presence set to: Playing {text}"))
 
     @commands.hybrid_command(name="shutdown", description="Shut the bot down.")
+    @app_commands.default_permissions(administrator=True)
     @commands.is_owner()
     async def shutdown(self, ctx):
         """Shut the bot down."""
@@ -384,6 +392,7 @@ class Management(commands.Cog):
         name="feature", invoke_without_command=True, fallback="help",
         description="Enable/disable a cog's behavior in this server.",
     )
+    @app_commands.default_permissions(manage_guild=True)
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
     async def feature(self, ctx):
