@@ -65,6 +65,7 @@ INITIAL_EXTENSIONS = [
     "cogs.palantir",
     "cogs.captions",
     "cogs.aidetect",
+    "cogs.trace",
 ]
 
 _synced = False

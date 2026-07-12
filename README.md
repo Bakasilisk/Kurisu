@@ -15,6 +15,7 @@ Command prefix is `.`.
   [Palantir](#palantir) ·
   [Captions](#captions) ·
   [AI Detect](#ai-detect) ·
+  [Trace Anime](#trace-anime) ·
   [Help](#help) ·
   [Management](#management) ·
   [Logging & data files](#logging--data-files)
@@ -23,10 +24,11 @@ Command prefix is `.`.
 
 ## Features
 
-Moderation, palantir, management, help, captions, and aidetect commands are also available as
-`/` slash commands with autocomplete descriptions; slash invocations reply ephemerally (visible
-only to the invoker) while `.` invocations reply publicly — except captions and aidetect, whose
-results always reply publicly regardless of invocation method. The other cogs are prefix-only.
+Moderation, palantir, management, help, captions, aidetect, and trace commands are also available
+as `/` slash commands with autocomplete descriptions; slash invocations reply ephemerally (visible
+only to the invoker) while `.` invocations reply publicly — except captions, aidetect, and trace,
+whose results always reply publicly regardless of invocation method. The other cogs are
+prefix-only.
 
 ### Triggers
 
@@ -230,6 +232,16 @@ always post publicly. Requires `SIGHTENGINE_API_USER` / `SIGHTENGINE_API_SECRET`
 free account at [sightengine.com](https://sightengine.com)); without them, the command replies
 that detection isn't configured instead of scoring. It's a probabilistic estimate, not proof.
 
+### Trace Anime
+
+`.trace` / `/trace [url]` reverse-searches a screenshot against trace.moe's scene index — attach
+an image, pass a URL, or reply to an image message. Right-click a message → **Apps** → **Trace
+anime** does the same without a command. Results (always posted publicly) show the anime title,
+episode, timestamp, similarity, a scene thumbnail, a muted preview clip when small enough to
+upload, and up to two runner-up matches; a match below 87% similarity is flagged as low
+confidence. Adult titles have their thumbnail/clip hidden outside age-restricted channels. Works
+anonymously; an optional `TRACE_MOE_API_KEY` in `.env` raises trace.moe's rate limit.
+
 ### Help
 
 `.help` / `/help` lists every command you can currently use, grouped by cog, with a one-line
@@ -301,6 +313,8 @@ archiving is turned on.
    - Optionally, set `SIGHTENGINE_API_USER` / `SIGHTENGINE_API_SECRET` (free account at
      [sightengine.com](https://sightengine.com)) to enable the [AI Detect](#ai-detect) `.aicheck`
      command; leave them blank to skip it.
+   - Optionally, set `TRACE_MOE_API_KEY` to raise the rate limit for [Trace Anime](#trace-anime)'s
+     `.trace` command; it works anonymously without one.
 
 3. **Invite the Bot to your Server:**
    - In the Developer Portal, go to **OAuth2** -> **URL Generator**.
