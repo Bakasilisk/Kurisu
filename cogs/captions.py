@@ -11,6 +11,7 @@ from .management import cog_enabled, common_error_reply
 from .storage import data_path
 
 IMAGE_DIR = data_path(os.path.join("assets", "captions"))
+FONT_PATH = data_path(os.path.join("assets", "fonts", "DejaVuSans.ttf"))
 MAX_TEXT_LENGTH = 200
 
 
@@ -80,7 +81,7 @@ def _fit_text(draw: ImageDraw.ImageDraw, text: str, region: Region):
 
     size = region.max_font_size
     while True:
-        font = ImageFont.load_default(size=size)
+        font = ImageFont.truetype(FONT_PATH, size=size)
         lines = _wrap_text(draw, text, font, max_w)
         wrapped = "\n".join(lines)
         bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center")
