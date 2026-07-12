@@ -13,6 +13,7 @@ Command prefix is `.`.
   [Verification](#verification) ·
   [Watchdog](#watchdog) ·
   [Palantir](#palantir) ·
+  [Captions](#captions) ·
   [Help](#help) ·
   [Management](#management) ·
   [Logging & data files](#logging--data-files)
@@ -21,9 +22,10 @@ Command prefix is `.`.
 
 ## Features
 
-Moderation, palantir, management, and help commands are also available as `/` slash commands
-with autocomplete descriptions; slash invocations reply ephemerally (visible only to the
-invoker) while `.` invocations reply publicly. The other cogs are prefix-only.
+Moderation, palantir, management, help, and captions commands are also available as `/` slash
+commands with autocomplete descriptions; slash invocations reply ephemerally (visible only to
+the invoker) while `.` invocations reply publicly — except captions, whose image result always
+replies publicly regardless of invocation method. The other cogs are prefix-only.
 
 ### Triggers
 
@@ -176,6 +178,26 @@ All palantir commands require `Manage Server`:
 | `palantir disable` | Turn logging off |
 | `palantir mute/unmute <category>` | Suppress/resume one category |
 | `palantir archive <on\|off>` | Toggle attachment archiving |
+
+### Captions
+
+Overlays text onto a fixed base image at pre-defined regions — one command per image, so
+adding a new image later is a new command, not a change to an existing one.
+
+| Command | Does |
+|---|---|
+| `makima <text1>` | Caption the Makima image with text |
+
+Multi-word text needs quoting when invoked with `.` (e.g. `.makima "top text"`); the `/` form
+takes it as a single option. Text is auto-wrapped and shrunk to fit its region; a template
+with a missing/unreadable base image replies with an error instead of crashing.
+
+Each image's blank text area is defined in code as a `Region(box=(x1, y1, x2, y2))` in
+`cogs/captions.py` — **two pixel points**, not four independent values: `(x1, y1)` is the
+region's top-left corner and `(x2, y2)` is its bottom-right corner, both measured from the
+image's own top-left origin `(0, 0)`. Adding a new image means measuring these two corners
+(e.g. by hovering over them in any image editor that shows cursor pixel position) and adding
+a new `Template` + thin command function alongside `MAKIMA`/`makima`.
 
 ### Help
 

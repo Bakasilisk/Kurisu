@@ -63,6 +63,7 @@ INITIAL_EXTENSIONS = [
     "cogs.watchdog",
     "cogs.verification",
     "cogs.palantir",
+    "cogs.captions",
 ]
 
 _synced = False
