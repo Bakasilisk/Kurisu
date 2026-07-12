@@ -36,6 +36,11 @@ class Triggers(commands.Cog):
         count = round(random.triangular(NUKO_MIN_REPEAT, NUKO_MAX_REPEAT, NUKO_MIN_REPEAT))
         await ctx.reply(NUKO_START + NUKO_MIDDLE * count + NUKO_END)
 
+    @commands.command(name="sex")
+    async def sex(self, ctx):
+        """Post a YouTube video."""
+        await ctx.reply("https://www.youtube.com/watch?v=qzPKgTuRwbs")
+
     @commands.Cog.listener()
     async def on_message(self, message):
         # Prevent the bot from replying to itself
