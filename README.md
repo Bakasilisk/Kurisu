@@ -191,7 +191,8 @@ adding a new image later is a new command, not a change to an existing one.
 |---|---|
 | `makima <text1>` | Caption the Makima image with text |
 | `denji <text1>` | Caption the Denji image with text |
-| `nanachi <text1> <text2>` | Caption the Nanachi image (left bubble, right bubble) |
+| `nanachi <text1> <text2>` | Caption the Nanachi image (right bubble, left bubble) |
+| `csm <text1> <text2>` | Caption the CSM image (`text1`, `text1?`, then `text2`) |
 
 A command with a single text field takes the rest of the message as that field, so multi-word
 text needs no quoting with either `.` or `/` (e.g. `makima`, `denji`). A command with more than

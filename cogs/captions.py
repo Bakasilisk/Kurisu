@@ -56,6 +56,20 @@ NANACHI = Template(
     ),
 )
 
+CSM = Template(
+    name="csm",
+    image_path=os.path.join(IMAGE_DIR, "csm.jpg"),
+    regions=(
+        # First and third bubbles are each a merge of two speech bubbles: one lobe
+        # keeps its original printed text, the other lobe is blank whitespace.
+        # The middle bubble (no bubble outline, just a floating blank shape) has
+        # no kept text at all.
+        Region(box=(380, 3, 595, 185)),  # first bubble, blank lobe
+        Region(box=(505, 600, 725, 755)),  # middle bubble, entirely blank
+        Region(box=(345, 890, 500, 1145)),  # third bubble, blank area below its kept text
+    ),
+)
+
 
 def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
     words = text.split()
@@ -158,6 +172,10 @@ class Captions(commands.Cog):
     @commands.hybrid_command(name="nanachi", description="Caption the Nanachi image (right bubble, left bubble).")
     async def nanachi(self, ctx, text1: str, text2: str):
         await self._render_and_send(ctx, NANACHI, [text1, text2])
+
+    @commands.hybrid_command(name="csm", description="Caption the CSM image (text1, text1?, text2).")
+    async def csm(self, ctx, text1: str, text2: str):
+        await self._render_and_send(ctx, CSM, [text1, f"{text1}?", text2])
 
 
 async def setup(bot):
