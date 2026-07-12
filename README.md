@@ -2,14 +2,15 @@
 
 An all-in-one, self-hosted Discord bot built on `discord.py`: moderation, automated raid/spam
 defense, full server surveillance logging, leveling, and a bits economy. Zero infrastructure —
-no database, no external services; everything persists to JSON files next to the code.
-Command prefix is `.`.
+no external services; nearly everything persists to JSON files next to the code, with a single
+local SQLite database (`stats.db`) for server statistics. Command prefix is `.`.
 
 - [Features](#features):
   [Triggers](#triggers) ·
   [Moderation](#moderation) ·
   [Leveling](#leveling) ·
   [Economy](#economy) ·
+  [Stats](#stats) ·
   [Verification](#verification) ·
   [Watchdog](#watchdog) ·
   [Palantir](#palantir) ·
@@ -26,10 +27,11 @@ Command prefix is `.`.
 
 ## Features
 
-Moderation, palantir, management, help, captions, aidetect, trace, anilist, and reminders commands
-are also available as `/` slash commands with autocomplete descriptions; slash invocations reply
-ephemerally (visible only to the invoker) while `.` invocations reply publicly — except captions,
-aidetect, trace, and anilist, whose results always reply publicly regardless of invocation method.
+Moderation, palantir, management, help, captions, aidetect, trace, anilist, reminders, and stats
+commands are also available as `/` slash commands with autocomplete descriptions; slash invocations
+reply ephemerally (visible only to the invoker) while `.` invocations reply publicly — except
+captions, aidetect, trace, and anilist, whose results always reply publicly regardless of
+invocation method.
 The economy sinks (`slots`, `daily`) are prefix-only and public, matching the rest of the economy
 cog. The other cogs are prefix-only.
 
@@ -97,6 +99,28 @@ A simple bits currency, tracked per server.
 | `coinflip` / `cf <amount>` | Bet bits on a coin flip (10-1000 bits) | — |
 | `slots <amount>` | Bet bits on the slot machine (10-250 bits); triples pay out up to 150x, exact pairs push | — |
 | `setbits <member> <amount>` | Correct a member's balance | Moderate Members |
+
+### Stats
+
+Passively tracks server activity — messages, words/chars, reactions given/received, voice time,
+and member joins/leaves — in a local SQLite database (`stats.db`, path configurable via
+`STATS_DB_PATH`), keeping full history rather than a rolling/reset counter.
+
+| Command | Does | Requires |
+|---|---|---|
+| `stats` / `stats server` | Server overview: totals + averages per day/week/month/year, active members, a ▲/▼ trend, top posters with %, and totals for words/reactions/voice | — |
+| `stats user [member] [n]` | One member's profile: total, averages, % of server, server rank, active days, busiest hour, words/message, reactions given/received, voice time, top channels | — for yourself; Manage Server for another member |
+| `stats top [period] [n]` | Top posters + % distribution; `period` is `week`/`month`/`year`/`all` | — |
+| `stats channels [period] [n]` | Busiest channels, counts + % share | — |
+| `stats activity [period]` | Peak hour/weekday summary plus an hour×weekday heatmap image | — |
+| `stats voice [period] [n]` | Top members by voice time | — |
+| `stats growth [period]` | Joins/leaves/net alongside message activity | — |
+| `stats quietest [n]` | Least-active members | Manage Server |
+| `stats backfill [days]` | Seed history from existing channel messages | Manage Server |
+
+`stats backfill` with no `days` scans the entire server — every readable text channel, full
+history — which is rate-limit-safe but can take a while on a large server; pass `days` to limit
+it to a recent window instead.
 
 ### Verification
 
@@ -328,6 +352,7 @@ manual setup needed:
 | `palantir.json`, `palantir_messages.json` | Palantir config, message cache |
 | `management.json` | Unloaded extensions, per-guild feature toggles |
 | `reminders.json` | Pending reminders |
+| `stats.db` | Server statistics (SQLite — the one non-JSON data file) |
 
 Palantir additionally stores archived attachment bytes under `palantir_attachments/` when
 archiving is turned on.

@@ -63,6 +63,7 @@ INITIAL_EXTENSIONS = [
     "cogs.watchdog",
     "cogs.verification",
     "cogs.palantir",
+    "cogs.stats",
     "cogs.captions",
     "cogs.aidetect",
     "cogs.trace",
