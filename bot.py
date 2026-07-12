@@ -67,6 +67,7 @@ INITIAL_EXTENSIONS = [
     "cogs.aidetect",
     "cogs.trace",
     "cogs.anilist",
+    "cogs.reminders",
 ]
 
 _synced = False

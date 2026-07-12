@@ -17,6 +17,7 @@ Command prefix is `.`.
   [AI Detect](#ai-detect) ·
   [Trace Anime](#trace-anime) ·
   [AniList](#anilist) ·
+  [Reminders](#reminders) ·
   [Help](#help) ·
   [Management](#management) ·
   [Logging & data files](#logging--data-files)
@@ -25,11 +26,12 @@ Command prefix is `.`.
 
 ## Features
 
-Moderation, palantir, management, help, captions, aidetect, trace, and anilist commands are also
-available as `/` slash commands with autocomplete descriptions; slash invocations reply ephemerally
-(visible only to the invoker) while `.` invocations reply publicly — except captions, aidetect,
-trace, and anilist, whose results always reply publicly regardless of invocation method. The other
-cogs are prefix-only.
+Moderation, palantir, management, help, captions, aidetect, trace, anilist, and reminders commands
+are also available as `/` slash commands with autocomplete descriptions; slash invocations reply
+ephemerally (visible only to the invoker) while `.` invocations reply publicly — except captions,
+aidetect, trace, and anilist, whose results always reply publicly regardless of invocation method.
+The economy sinks (`slots`, `daily`) are prefix-only and public, matching the rest of the economy
+cog. The other cogs are prefix-only.
 
 ### Triggers
 
@@ -262,6 +264,20 @@ Both take the rest of the message as the title, so multi-word titles need no quo
 episode/chapter count, status, genres, and cover art. Adult titles have their cover hidden outside
 age-restricted channels. No API key needed — AniList's GraphQL API is public and unauthenticated.
 
+### Reminders
+
+| Command | Does |
+|---|---|
+| `remindme <duration> <text>` | Set a reminder, e.g. `.remindme 2h walk the dog` (durations like timeouts: `10m`, `2h`, `1d`) |
+| `reminders` | List your pending reminders |
+| `forget <id>` | Cancel a pending reminder by ID |
+
+Delivery pings you in the channel the reminder was set in; if that fails (channel deleted, no
+permission, …) it falls back to a DM. A reminder that comes due while the bot is offline still
+fires — late by more than two minutes, it's delivered with an apology — checked on a 30-second
+tick, so delivery can lag up to that long. Durations can't exceed 90 days; each member can have
+at most 10 pending reminders at once.
+
 ### Help
 
 `.help` / `/help` lists every command you can currently use, grouped by cog, with a one-line
@@ -310,6 +326,7 @@ manual setup needed:
 | `watchdog.json` | Watchdog config, including active lockdown state |
 | `palantir.json`, `palantir_messages.json` | Palantir config, message cache |
 | `management.json` | Unloaded extensions, per-guild feature toggles |
+| `reminders.json` | Pending reminders |
 
 Palantir additionally stores archived attachment bytes under `palantir_attachments/` when
 archiving is turned on.

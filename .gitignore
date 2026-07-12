@@ -32,6 +32,9 @@ palantir.json
 palantir_messages.json
 palantir_attachments/
 
+# Reminders data
+reminders.json
+
 # Logs
 logs/
 
