@@ -141,6 +141,9 @@ All watchdog commands require `Manage Server`:
 | `watchdog protectedrole add/remove/list <role>` | Roles that keep send permission during lockdown |
 | `watchdog unlock` | Lift an active lockdown |
 
+Bots, the server owner, and members with Manage Messages or Administrator are always
+exempt, in addition to the configured exempt list.
+
 Known v1 limitations: webhook messages are safely ignored rather than acted upon (a webhook
 can't be timed out); detection thresholds are fixed constants, not yet per-server tunable.
 
@@ -303,7 +306,7 @@ archiving is turned on.
    - Click **Add Bot** and then **Reset Token** to copy your bot's token.
    - Under **Privileged Gateway Intents**, make sure to enable the **Message Content Intent**
      (required for the bot to read messages) and the **Server Members Intent** (required for
-     watchdog's high-value-role detection).
+     watchdog's high-value-role detection and palantir's member logging).
 
 2. **Configure your Token:**
    - Copy `.env.example` to `.env`:
@@ -324,6 +327,8 @@ archiving is turned on.
    - Under **Bot Permissions**, select:
      - `Read Messages/View Channels`
      - `Send Messages`
+     - `Embed Links`, `Attach Files` (most replies are embeds; captions/trace/palantir
+       upload files)
      - `Read Message History`
      - `Kick Members`, `Ban Members`, `Moderate Members`, `Manage Messages`, `Manage Channels`,
        `Manage Roles` (needed for the moderation commands, `lock`/`unlock`, verification's

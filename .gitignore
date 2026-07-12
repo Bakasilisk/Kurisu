@@ -24,6 +24,9 @@ watchdog.json
 # Verification data
 verification.json
 
+# Management data
+management.json
+
 # Palantir data
 palantir.json
 palantir_messages.json
