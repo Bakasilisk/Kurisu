@@ -46,6 +46,15 @@ DENJI = Template(
     ),
 )
 
+NANACHI = Template(
+    name="nanachi",
+    image_path=os.path.join(IMAGE_DIR, "nanachi.png"),
+    regions=(
+        Region(box=(489, 0, 638, 426)),  # right bubble, read first in this manga's right-to-left order
+        Region(box=(5, 95, 139, 467)),  # left bubble, read second
+    ),
+)
+
 
 def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
     words = text.split()
@@ -144,6 +153,10 @@ class Captions(commands.Cog):
     @commands.hybrid_command(name="denji", description="Caption the Denji image.")
     async def denji(self, ctx, *, text1: str):
         await self._render_and_send(ctx, DENJI, [text1])
+
+    @commands.hybrid_command(name="nanachi", description="Caption the Nanachi image (right bubble, left bubble).")
+    async def nanachi(self, ctx, text1: str, text2: str):
+        await self._render_and_send(ctx, NANACHI, [text1, text2])
 
 
 async def setup(bot):

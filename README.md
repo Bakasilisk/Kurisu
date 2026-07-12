@@ -188,23 +188,37 @@ adding a new image later is a new command, not a change to an existing one.
 |---|---|
 | `makima <text1>` | Caption the Makima image with text |
 | `denji <text1>` | Caption the Denji image with text |
+| `nanachi <text1> <text2>` | Caption the Nanachi image (left bubble, right bubble) |
 
-`text1` takes the rest of the message, so multi-word text needs no quoting with either `.` or
-`/`. Text is auto-wrapped and shrunk to fit its region; a template with a missing/unreadable
-base image replies with an error instead of crashing.
+A command with a single text field takes the rest of the message as that field, so multi-word
+text needs no quoting with either `.` or `/` (e.g. `makima`, `denji`). A command with more than
+one text field (e.g. `nanachi`) needs quotes around multi-word text with `.` (`.nanachi "Serves
+you right." "Your ambition ends here."`) since there's no other way to tell where one field ends
+and the next begins; `/` never needs quoting since each field is its own option. Text is
+auto-wrapped and shrunk to fit its region; a template with a missing/unreadable base image
+replies with an error instead of crashing.
 
 Each image's blank text area is defined in code as a `Region(box=(x1, y1, x2, y2))` in
 `cogs/captions.py` — **two pixel points**, not four independent values: `(x1, y1)` is the
 region's top-left corner and `(x2, y2)` is its bottom-right corner, both measured from the
-image's own top-left origin `(0, 0)`. Adding a new image means getting these two corners and
-adding a new `Template` + thin command function alongside `MAKIMA`/`makima`.
+image's own top-left origin `(0, 0)`. Adding a new image means getting these corners (one
+`Region` per bubble) and adding a new `Template` + thin command function alongside
+`MAKIMA`/`makima`.
 
-To prep a base image that still has dialogue text in its speech bubble, run
-`python scripts/detect_bubble.py <input.png> <output.png>`: it auto-detects the bubble as the
-largest fully-enclosed light region, erases the text inside it while leaving the bubble's own
-outline intact, and prints the `Region(box=...)` to paste into `cogs/captions.py`. It assumes a
-single bubble that's the largest enclosed light area in the image — review the output image
-before wiring it into a `Template`.
+To prep a base image that still has dialogue text in its speech bubble(s), use
+`scripts/detect_bubble.py`:
+
+```bash
+python scripts/detect_bubble.py list <input.png>
+python scripts/detect_bubble.py erase <input.png> <output.png> <index> [index ...]
+```
+
+`list` ranks bright connected regions by area — the actual bubble(s) stand out but so can other
+bright clutter (e.g. a page's own margin, eye highlights), so check the printed box against the
+image before picking indices. `erase` erases the dialogue text inside the chosen bubble(s) (any
+dark ink fully enclosed by that bubble's own pixels, leaving its outline intact) and prints one
+`Region(box=...)` per index in the order given — pass multiple indices for a multi-bubble image
+like `nanachi`. Review the output image before wiring it into a `Template`.
 
 ### Help
 
