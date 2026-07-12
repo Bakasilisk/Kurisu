@@ -149,6 +149,9 @@ class Stats(commands.Cog):
         self._reaction_acc: dict[tuple[int, str, int], list[int]] = defaultdict(lambda: [0, 0])
         self._voice_acc: dict[tuple[int, str, int], int] = defaultdict(int)
         self._membership_acc: dict[tuple[int, str], list[int]] = defaultdict(lambda: [0, 0])
+        # (guild_id, day) pairs marked live by on_message only — see live_days
+        # table above. A set, not a dict, since membership is all that matters.
+        self._live_days_acc: set[tuple[int, str]] = set()
         self._acc_lock = asyncio.Lock()
         self._dirty = False
 
@@ -255,6 +258,19 @@ class Stats(commands.Cog):
                 )
                 """
             )
+            # A day becomes "live" for a guild the moment on_message records a
+            # message on it (never written by backfill) — see _run_backfill,
+            # which uses this table to figure out which days it's allowed to
+            # (re)seed without double-counting live-ingested data.
+            self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS live_days (
+                    guild_id INTEGER NOT NULL,
+                    day TEXT NOT NULL,
+                    PRIMARY KEY (guild_id, day)
+                )
+                """
+            )
             self._db.commit()
 
     # --- Buffer -> flush --------------------------------------------------
@@ -269,12 +285,14 @@ class Stats(commands.Cog):
             dict(self._reaction_acc),
             dict(self._voice_acc),
             dict(self._membership_acc),
+            set(self._live_days_acc),
         )
         self._msg_acc.clear()
         self._hourly_acc.clear()
         self._reaction_acc.clear()
         self._voice_acc.clear()
         self._membership_acc.clear()
+        self._live_days_acc.clear()
         self._dirty = False
         return snapshot
 
@@ -282,7 +300,7 @@ class Stats(commands.Cog):
         """Restore a drained-but-failed-to-write snapshot into the live
         accumulators (additively, so it combines correctly with anything
         accumulated in the meantime) — the retry path for a flush failure."""
-        msg, hourly, reactions, voice, membership = snapshot
+        msg, hourly, reactions, voice, membership, live_days = snapshot
         for key, vals in msg.items():
             cur = self._msg_acc[key]
             cur[0] += vals[0]
@@ -300,8 +318,9 @@ class Stats(commands.Cog):
             cur = self._membership_acc[key]
             cur[0] += vals[0]
             cur[1] += vals[1]
+        self._live_days_acc |= live_days
 
-    def _write_snapshot(self, msg, hourly, reactions, voice, membership) -> None:
+    def _write_snapshot(self, msg, hourly, reactions, voice, membership, live_days) -> None:
         """Blocking: executemany UPSERT each non-empty accumulator into its
         table. Called via asyncio.to_thread from _flush_now, or directly
         (blocking is fine — we're shutting down) from cog_unload."""
@@ -357,6 +376,11 @@ class Stats(commands.Cog):
                         leaves = leaves + excluded.leaves
                     """,
                     [(g, d, v[0], v[1]) for (g, d), v in membership.items()],
+                )
+            if live_days:
+                self._db.executemany(
+                    "INSERT OR IGNORE INTO live_days (guild_id, day) VALUES (?, ?)",
+                    list(live_days),
                 )
             self._db.commit()
 
@@ -461,6 +485,12 @@ class Stats(commands.Cog):
             guild.id, day, hour, message.author.id, message.channel.id,
             words=len(message.content.split()), chars=len(message.content),
         )
+        # Live path only — never inside _accumulate_message, which backfill
+        # also calls. This is what lets _run_backfill tell "already covered
+        # by live ingest" days apart from "needs seeding" days.
+        async with self._acc_lock:
+            self._live_days_acc.add((guild.id, day))
+            self._dirty = True
 
     async def _handle_reaction(self, reaction: discord.Reaction, user, *, delta: int) -> None:
         message = reaction.message
@@ -943,12 +973,15 @@ class Stats(commands.Cog):
     @has_permissions_or_owner(manage_guild=True)
     @commands.guild_only()
     async def stats_backfill(self, ctx, days: int = BACKFILL_DEFAULT_DAYS):
-        """Seed message/word/char/hourly history from every readable text
-        channel's message log. No `days` = the entire server history (can
-        take a while on a large server, but discord.py auto-throttles
-        pagination so it can't outrun the rate limit). Only seeds
-        messages/words/chars/hourly — reactions/voice can't be recovered
-        retroactively. One-time seeding: re-running double-counts prior days."""
+        """Seed message/word/char/hourly history from every readable message
+        source (text/announcement channels, threads — active and archived,
+        including forum posts — and voice/stage channel text chat). No `days`
+        = the entire server history (can take a while on a large server, but
+        discord.py auto-throttles pagination so it can't outrun the rate
+        limit). Only seeds messages/words/chars/hourly — reactions/voice
+        can't be recovered retroactively. Idempotent: re-running only
+        reseeds days live ingest hasn't already recorded, so it's safe to
+        run again (e.g. after inviting the bot to more channels)."""
         guild = ctx.guild
         if guild.id in self._backfill_in_progress:
             await self._reply(ctx, "A backfill is already running for this server — wait for it to finish.")
@@ -970,42 +1003,110 @@ class Stats(commands.Cog):
         )
         asyncio.ensure_future(self._run_backfill(guild, ctx.channel, after))
 
+    async def _backfill_sources(self, guild: discord.Guild):
+        """Yield every history-capable messageable object that live ingest's
+        on_message can fire for: text/announcement channels, voice/stage
+        channel text chat, and threads (active + archived, public + private,
+        including forum posts) attached to a text channel or forum. Bare
+        objects only — permission checks and history iteration are the
+        caller's job, so one bad source doesn't abort the whole scan."""
+        for channel in guild.text_channels:
+            yield channel
+        for channel in guild.voice_channels:
+            yield channel
+        for channel in guild.stage_channels:
+            yield channel
+
+        # Forums have no messages of their own — only their threads (posts)
+        # do — so they're scanned here as thread parents, not as sources above.
+        for parent in list(guild.text_channels) + list(guild.forums):
+            for thread in parent.threads:
+                yield thread
+            try:
+                async for thread in parent.archived_threads(limit=None):
+                    yield thread
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+            # Private archived threads: only TextChannel supports the
+            # `private=` kwarg (ForumChannel threads have no private variant).
+            if isinstance(parent, discord.TextChannel):
+                try:
+                    async for thread in parent.archived_threads(limit=None, private=True):
+                        yield thread
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+    def _delete_backfill_range(self, guild_id: int, after_day: str | None) -> None:
+        """Blocking: delete the messages/hourly rows backfill is about to
+        rebuild — every row in scope for this guild whose day is NOT a live
+        day, so a re-run reseeds cleanly instead of double-counting. Live
+        data (a day on which on_message has recorded anything) is never
+        touched, since it's excluded by the NOT IN subquery."""
+        with self._db_lock:
+            for table in ("messages", "hourly"):
+                if after_day is not None:
+                    self._db.execute(
+                        f"DELETE FROM {table} WHERE guild_id=? AND day>=? "
+                        "AND day NOT IN (SELECT day FROM live_days WHERE guild_id=?)",
+                        (guild_id, after_day, guild_id),
+                    )
+                else:
+                    self._db.execute(
+                        f"DELETE FROM {table} WHERE guild_id=? "
+                        "AND day NOT IN (SELECT day FROM live_days WHERE guild_id=?)",
+                        (guild_id, guild_id),
+                    )
+            self._db.commit()
+
     async def _run_backfill(self, guild: discord.Guild, report_channel, after: datetime | None) -> None:
         started = time.monotonic()
-        today = self._day_str(datetime.now(timezone.utc))
-        channels_scanned = 0
-        channels_skipped = 0
+        sources_scanned = 0
+        sources_skipped = 0
         messages_seen = 0
         try:
-            for channel in guild.text_channels:
-                perms = channel.permissions_for(guild.me)
+            # Flush first so the live-day snapshot below reflects the last
+            # few seconds of buffered activity too, then delete-then-reseed
+            # the backfill's own range (never touches live-owned days) so a
+            # re-run is idempotent instead of piling on top of last time.
+            await self._flush_now()
+            live_day_rows = await asyncio.to_thread(
+                self._query, "SELECT day FROM live_days WHERE guild_id=?", (guild.id,)
+            )
+            live_days = {row[0] for row in live_day_rows}
+
+            after_day = self._day_str(after) if after is not None else None
+            await asyncio.to_thread(self._delete_backfill_range, guild.id, after_day)
+
+            async for source in self._backfill_sources(guild):
+                perms = source.permissions_for(guild.me)
                 if not perms.view_channel or not perms.read_message_history:
-                    channels_skipped += 1
+                    sources_skipped += 1
                     continue
                 try:
-                    async for message in channel.history(limit=None, after=after):
+                    async for message in source.history(limit=None, after=after):
                         if message.author.bot:
                             continue
                         day = self._day_str(message.created_at)
-                        if day == today:
-                            continue  # today is already covered by live ingest
+                        if day in live_days:
+                            continue  # this day is already owned by live ingest
                         hour = message.created_at.astimezone(timezone.utc).hour
                         await self._accumulate_message(
-                            guild.id, day, hour, message.author.id, channel.id,
+                            guild.id, day, hour, message.author.id, source.id,
                             words=len(message.content.split()), chars=len(message.content),
                         )
                         messages_seen += 1
-                except discord.Forbidden:
-                    channels_skipped += 1
+                except (discord.Forbidden, discord.HTTPException):
+                    sources_skipped += 1
                     continue
-                channels_scanned += 1
+                sources_scanned += 1
                 await asyncio.sleep(BACKFILL_CHANNEL_SLEEP)
 
             await self._flush_now()
             elapsed = time.monotonic() - started
             await report_channel.send(
-                f"✅ Backfill complete: scanned {channels_scanned} channel(s) "
-                f"({channels_skipped} skipped), recorded {messages_seen:,} message(s) in {elapsed:.0f}s."
+                f"✅ Backfill complete: scanned {sources_scanned} source(s) — channels, threads/forum "
+                f"posts, voice text ({sources_skipped} skipped), recorded {messages_seen:,} message(s) "
+                f"in {elapsed:.0f}s."
             )
         except Exception:
             logger.exception("Stats: backfill failed for guild %s", guild.id)
@@ -1015,6 +1116,53 @@ class Stats(commands.Cog):
                 pass
         finally:
             self._backfill_in_progress.discard(guild.id)
+
+    @stats.command(
+        name="reset",
+        description="Erase this server's stats entirely (Manage Server only). Requires confirm:confirm.",
+    )
+    @has_permissions_or_owner(manage_guild=True)
+    @commands.guild_only()
+    async def stats_reset(self, ctx, confirm: str = None):
+        """Wipe every message/hour/reaction/voice/membership/live-day row for
+        this server. Destructive and irreversible, so it requires the
+        literal argument `confirm` (`.stats reset confirm` /
+        `/stats reset confirm:confirm`) — anything else just shows this
+        warning without touching data."""
+        if confirm != "confirm":
+            await self._reply(
+                ctx,
+                "⚠️ This permanently erases **all** stats for this server — messages, words/chars, "
+                "hourly activity, reactions, voice time, joins/leaves, and backfill history. This "
+                "cannot be undone. To proceed, run `.stats reset confirm` (or `/stats reset "
+                "confirm:confirm`).",
+            )
+            return
+        await self._reset_guild(ctx.guild.id)
+        await self._reply(ctx, "🗑️ This server's stats have been wiped.")
+
+    async def _reset_guild(self, guild_id: int) -> None:
+        """Drop every trace of one guild's stats, in-memory and on disk.
+        Accumulators are cleared first (under _acc_lock) so nothing buffered
+        right now can repopulate the guild's rows right after the DB wipe."""
+        async with self._acc_lock:
+            for acc in (self._msg_acc, self._hourly_acc, self._reaction_acc, self._voice_acc):
+                for key in [k for k in acc if k[0] == guild_id]:
+                    del acc[key]
+            for key in [k for k in self._membership_acc if k[0] == guild_id]:
+                del self._membership_acc[key]
+            self._live_days_acc = {d for d in self._live_days_acc if d[0] != guild_id}
+            for key in [k for k in self._voice_sessions if k[0] == guild_id]:
+                del self._voice_sessions[key]
+            self._backfill_in_progress.discard(guild_id)
+
+        await asyncio.to_thread(self._delete_guild_rows, guild_id)
+
+    def _delete_guild_rows(self, guild_id: int) -> None:
+        with self._db_lock:
+            for table in ("messages", "hourly", "reactions", "voice", "membership", "live_days"):
+                self._db.execute(f"DELETE FROM {table} WHERE guild_id=?", (guild_id,))
+            self._db.commit()
 
 
 async def setup(bot):

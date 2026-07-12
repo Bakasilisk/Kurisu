@@ -119,14 +119,21 @@ and member joins/leaves — in a local SQLite database (`stats.db`, path configu
 | `stats voice [period] [n]` | Top members by voice time | — |
 | `stats growth [period]` | Joins/leaves/net alongside message activity | — |
 | `stats quietest [n]` | Least-active members | Manage Server |
-| `stats backfill [days]` | Seed history from existing channel messages | Manage Server |
+| `stats backfill [days]` | Seed history from existing message logs | Manage Server |
+| `stats reset confirm` | Erase all of this server's stats | Manage Server |
 
 `n` (on `user`/`top`/`channels`/`voice`/`quietest`) controls how many rows to show — defaults
 to 5, capped at 25.
 
-`stats backfill` with no `days` scans the entire server — every readable text channel, full
-history — which is rate-limit-safe but can take a while on a large server; pass `days` to limit
-it to a recent window instead.
+`stats backfill` with no `days` scans the entire server — every readable text/announcement
+channel, thread (active and archived, including forum posts), and voice/stage channel's text
+chat — full history, which is rate-limit-safe but can take a while on a large server; pass
+`days` to limit it to a recent window instead. It's idempotent: a day already covered by live
+message tracking is never re-seeded, so re-running (e.g. after inviting the bot to more
+channels) reseeds only what's still missing instead of double-counting.
+
+`stats reset` wipes all of a server's stats (messages, reactions, voice, joins/leaves, backfill
+history) — irreversible, so it no-ops with a warning unless run as `stats reset confirm`.
 
 ### Verification
 
