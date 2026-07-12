@@ -55,7 +55,8 @@ class Verification(commands.Cog):
         await ctx.reply(
             f"Granter role: {granter.mention if granter else 'Not set'}\n"
             f"Role granted: {target.mention if target else 'Not set'}\n"
-            f"Members with the granter role can run `.verify @member`."
+            f"Members with the granter role can run `.verify @member`.",
+            allowed_mentions=discord.AllowedMentions(roles=False),
         )
 
     @verification.command(name="granter")
@@ -66,7 +67,10 @@ class Verification(commands.Cog):
         guild_conf = self._guild_conf(ctx.guild.id)
         guild_conf["granter_role_id"] = role.id
         self._save_config()
-        await ctx.reply(f"✅ {role.mention} can now use `.verify`.")
+        await ctx.reply(
+            f"✅ {role.mention} can now use `.verify`.",
+            allowed_mentions=discord.AllowedMentions(roles=False),
+        )
 
     @verification.command(name="target")
     @commands.has_permissions(manage_guild=True)
@@ -76,7 +80,10 @@ class Verification(commands.Cog):
         guild_conf = self._guild_conf(ctx.guild.id)
         guild_conf["target_role_id"] = role.id
         self._save_config()
-        await ctx.reply(f"✅ `.verify` now grants {role.mention}.")
+        await ctx.reply(
+            f"✅ `.verify` now grants {role.mention}.",
+            allowed_mentions=discord.AllowedMentions(roles=False),
+        )
 
     @commands.command()
     @commands.guild_only()
@@ -109,7 +116,10 @@ class Verification(commands.Cog):
             return
 
         await member.add_roles(target_role, reason=f"Granted by {ctx.author} via .verify")
-        await ctx.reply(f"✅ Gave {member.mention} the {target_role.mention} role.")
+        await ctx.reply(
+            f"✅ Gave {member.mention} the {target_role.mention} role.",
+            allowed_mentions=discord.AllowedMentions(roles=False),
+        )
 
 
 async def setup(bot):
