@@ -87,10 +87,12 @@ A simple bits currency, tracked per server.
 | Command | Does | Requires |
 |---|---|---|
 | `payday` | Collect 120 bits, once every 12 hours; shows the new balance and server rank, or the time remaining if already claimed | — |
+| `daily` | Collect 100 bits once every 20 hours, +25 bits per consecutive day (capped at day 7, 250 bits/day); claiming again within 48 hours of the last one extends the streak, later resets it | — |
 | `balance` / `bal [member]` | Check bits without claiming | — |
 | `richest [count]` | The server's top bit holders | — |
 | `give <member> <amount>` | Transfer bits to another member | — |
 | `coinflip` / `cf <amount>` | Bet bits on a coin flip (10-1000 bits) | — |
+| `slots <amount>` | Bet bits on the slot machine (10-250 bits); triples pay out up to 150x, exact pairs push | — |
 | `setbits <member> <amount>` | Correct a member's balance | Moderate Members |
 
 ### Verification

@@ -14,6 +14,22 @@ PAYDAY_COOLDOWN_SECONDS = 12 * 60 * 60
 COINFLIP_MIN_BET = 10
 COINFLIP_MAX_BET = 1000
 
+SLOTS_MIN_BET = 10
+SLOTS_MAX_BET = 250   # deliberately < COINFLIP_MAX_BET: 7️⃣ jackpot is 150x
+SLOTS_SYMBOLS = ("🍒", "🍋", "🍇", "🔔", "💎", "7️⃣")
+SLOTS_WEIGHTS = (5, 4, 3, 2, 1, 1)
+# Payouts are total-return multipliers. Odds (do not re-derive): triples 226/4096
+# contributing 1604/4096, exact pairs 2010/4096 · 1x → EV = 3614/4096 ≈ 0.882,
+# house edge ≈ 11.8%.
+SLOTS_TRIPLE_PAYOUTS = {"🍒": 4, "🍋": 6, "🍇": 10, "🔔": 25, "💎": 100, "7️⃣": 150}
+SLOTS_PAIR_PAYOUT = 1  # exact pair = push (bet returned)
+
+DAILY_BASE_AMOUNT = 100
+DAILY_STREAK_BONUS = 25          # per consecutive day beyond the first
+DAILY_STREAK_CAP = 7             # bonus stops growing (max 250/day)
+DAILY_COOLDOWN_SECONDS = 20 * 60 * 60
+DAILY_STREAK_WINDOW_SECONDS = 48 * 60 * 60
+
 
 def _format_cooldown(seconds) -> str:
     total_minutes = max(1, int(seconds) // 60)
@@ -92,6 +108,56 @@ class Economy(commands.Cog):
         )
         embed.add_field(name="Balance", value=f"{entry['balance']} bits")
         embed.add_field(name="Server Rank", value=f"#{position}")
+        await ctx.reply(embed=embed)
+
+    @commands.command(name="daily")
+    @commands.guild_only()
+    async def daily(self, ctx):
+        """Collect your daily bits, with a streak bonus for consecutive days."""
+        entry = self._account(ctx.guild.id, ctx.author.id)
+        # last_daily/streak aren't in the _account default dict (line 43) — existing
+        # persisted accounts predate this command regardless, so daily is the sole
+        # reader/writer of these two keys and backfills them here at the use site.
+        entry.setdefault("last_daily", 0.0)
+        entry.setdefault("streak", 0)
+
+        now = time.time()
+        remaining = DAILY_COOLDOWN_SECONDS - (now - entry["last_daily"])
+        if remaining > 0:
+            await ctx.reply(
+                f"⏳ You've already collected your daily. Try again in {_format_cooldown(remaining)}."
+            )
+            return
+
+        elapsed = now - entry["last_daily"]
+        previous_streak = entry["streak"]
+        if elapsed <= DAILY_STREAK_WINDOW_SECONDS:
+            entry["streak"] += 1
+            streak_broke = False
+        else:
+            entry["streak"] = 1
+            streak_broke = previous_streak > 0
+
+        streak = entry["streak"]
+        amount = DAILY_BASE_AMOUNT + DAILY_STREAK_BONUS * (min(streak, DAILY_STREAK_CAP) - 1)
+        entry["balance"] += amount
+        entry["last_daily"] = now
+        self._save()
+
+        guild_bank = self._guild_bank(ctx.guild.id)
+        position = rank_of(guild_bank.items(), lambda kv: kv[1]["balance"], str(ctx.author.id))
+
+        embed = discord.Embed(
+            title="📅 Daily",
+            description=f"{ctx.author.mention} collected **{amount} bits**!",
+            color=discord.Color.dark_gold(),
+        )
+        embed.add_field(name="Balance", value=f"{entry['balance']} bits")
+        embed.add_field(name="Server Rank", value=f"#{position}")
+        streak_value = f"{streak} day(s)"
+        if streak_broke:
+            streak_value += " — streak reset"
+        embed.add_field(name="Streak", value=streak_value)
         await ctx.reply(embed=embed)
 
     @commands.command(name="balance", aliases=["bal"])
@@ -190,6 +256,50 @@ class Economy(commands.Cog):
             reply = f"🪙 Tails! You lost **{amount} bits**. New balance: {entry['balance']}."
         self._save()
         await ctx.reply(reply)
+
+    @commands.command(name="slots")
+    @commands.guild_only()
+    async def slots(self, ctx, amount: int):
+        """Bet bits on the slot machine (triples pay out, exact pairs push)."""
+        if amount < SLOTS_MIN_BET:
+            await ctx.reply(f"Minimum bet is {SLOTS_MIN_BET} bits.")
+            return
+        if amount > SLOTS_MAX_BET:
+            await ctx.reply(f"Maximum bet is {SLOTS_MAX_BET} bits.")
+            return
+
+        entry = self._account(ctx.guild.id, ctx.author.id)
+        if entry["balance"] < amount:
+            await ctx.reply(f"You don't have enough bits (you have {entry['balance']}).")
+            return
+
+        reels = random.choices(SLOTS_SYMBOLS, weights=SLOTS_WEIGHTS, k=3)
+        distinct = len(set(reels))
+        if distinct == 1:
+            multiplier = SLOTS_TRIPLE_PAYOUTS[reels[0]]
+        elif distinct == 2:
+            multiplier = SLOTS_PAIR_PAYOUT
+        else:
+            multiplier = 0
+
+        entry["balance"] += amount * (multiplier - 1)
+        self._save()
+
+        if multiplier > 1:
+            result = f"🎉 Triple {reels[0]}! You won **{amount * (multiplier - 1)} bits**."
+        elif multiplier == 1:
+            result = "🔁 Pair — push. Your bet was returned."
+        else:
+            result = f"💸 No match. You lost **{amount} bits**."
+
+        embed = discord.Embed(
+            title="🎰 Slots",
+            description=f"[ {reels[0]} | {reels[1]} | {reels[2]} ]",
+            color=discord.Color.dark_gold(),
+        )
+        embed.add_field(name="Result", value=result, inline=False)
+        embed.add_field(name="Balance", value=f"{entry['balance']} bits")
+        await ctx.reply(embed=embed)
 
 
 async def setup(bot):
