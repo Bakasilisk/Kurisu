@@ -35,6 +35,11 @@ palantir_attachments/
 # Reminders data
 reminders.json
 
+# Stats data
+stats.db
+stats.db-wal
+stats.db-shm
+
 # Logs
 logs/
 
