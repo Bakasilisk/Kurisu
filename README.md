@@ -41,6 +41,7 @@ Auto-replies on every message:
 |---|---|
 | `nuko` | Posts a chain of nuko emotes with a random-length middle section |
 | `füße` | Mentions a specific (hardcoded) user |
+| `sex` | Posts a YouTube video |
 
 ### Moderation
 
