@@ -187,10 +187,11 @@ adding a new image later is a new command, not a change to an existing one.
 | Command | Does |
 |---|---|
 | `makima <text1>` | Caption the Makima image with text |
+| `denji <text1>` | Caption the Denji image with text |
 
-Multi-word text needs quoting when invoked with `.` (e.g. `.makima "top text"`); the `/` form
-takes it as a single option. Text is auto-wrapped and shrunk to fit its region; a template
-with a missing/unreadable base image replies with an error instead of crashing.
+`text1` takes the rest of the message, so multi-word text needs no quoting with either `.` or
+`/`. Text is auto-wrapped and shrunk to fit its region; a template with a missing/unreadable
+base image replies with an error instead of crashing.
 
 Each image's blank text area is defined in code as a `Region(box=(x1, y1, x2, y2))` in
 `cogs/captions.py` — **two pixel points**, not four independent values: `(x1, y1)` is the

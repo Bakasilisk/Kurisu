@@ -38,6 +38,14 @@ MAKIMA = Template(
     ),
 )
 
+DENJI = Template(
+    name="denji",
+    image_path=os.path.join(IMAGE_DIR, "denji.png"),
+    regions=(
+        Region(box=(142, 172, 433, 410)),
+    ),
+)
+
 
 def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
     words = text.split()
@@ -132,6 +140,10 @@ class Captions(commands.Cog):
     @commands.hybrid_command(name="makima", description="Caption the Makima image.")
     async def makima(self, ctx, *, text1: str):
         await self._render_and_send(ctx, MAKIMA, [text1])
+
+    @commands.hybrid_command(name="denji", description="Caption the Denji image.")
+    async def denji(self, ctx, *, text1: str):
+        await self._render_and_send(ctx, DENJI, [text1])
 
 
 async def setup(bot):
