@@ -45,6 +45,7 @@ Auto-replies on every message:
 | `nuko` | Posts a chain of nuko emotes with a random-length middle section |
 | `füße` | Mentions a specific (hardcoded) user |
 | `sex` | Posts a YouTube video |
+| `king [member]` | Crowns yourself or a mentioned member King, with a special reply if you crown the bot |
 
 ### Moderation
 

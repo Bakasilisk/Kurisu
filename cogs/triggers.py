@@ -1,8 +1,12 @@
+import glob
+import os
 import random
 
+import discord
 from discord.ext import commands
 
 from .management import cog_enabled
+from .storage import data_path
 
 FUSSE_TARGET_USER_ID = 1058738968339955782
 
@@ -11,6 +15,11 @@ NUKO_MIDDLE = "<:nukoMittel:988561885131599982>"
 NUKO_END = "<:nukoVorne:988561886490533978>"
 NUKO_MIN_REPEAT = 3
 NUKO_MAX_REPEAT = 12
+
+KING_DIR = data_path(os.path.join("assets", "king"))
+KING_SELF_GIF = os.path.join(KING_DIR, "self.gif")
+KING_KURI_GIF = os.path.join(KING_DIR, "kuri.gif")
+KING_GLOB = os.path.join(KING_DIR, "king*.gif")
 
 
 class Triggers(commands.Cog):
@@ -40,6 +49,23 @@ class Triggers(commands.Cog):
     async def sex(self, ctx):
         """Post a YouTube video."""
         await ctx.reply("https://www.youtube.com/watch?v=qzPKgTuRwbs")
+
+    @commands.command(name="king")
+    async def king(self, ctx, member: discord.Member = None):
+        """Crown yourself or another member King."""
+        if member is None:
+            await ctx.reply(f"{ctx.author.mention} ist King.", file=discord.File(KING_SELF_GIF))
+        elif member.id == self.bot.user.id:
+            await ctx.reply(
+                "W-was ich? Nein Bruder, du bist der einzig wahre King.",
+                file=discord.File(KING_KURI_GIF),
+            )
+        else:
+            gif_path = random.choice(glob.glob(KING_GLOB))
+            await ctx.reply(
+                f"{ctx.author.mention} ernennt {member.mention} zum King. Wahre Kings meine Freunde!",
+                file=discord.File(gif_path),
+            )
 
     @commands.Cog.listener()
     async def on_message(self, message):
