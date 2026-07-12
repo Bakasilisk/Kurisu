@@ -14,6 +14,7 @@ Command prefix is `.`.
   [Watchdog](#watchdog) ·
   [Palantir](#palantir) ·
   [Captions](#captions) ·
+  [AI Detect](#ai-detect) ·
   [Help](#help) ·
   [Management](#management) ·
   [Logging & data files](#logging--data-files)
@@ -22,10 +23,10 @@ Command prefix is `.`.
 
 ## Features
 
-Moderation, palantir, management, help, and captions commands are also available as `/` slash
-commands with autocomplete descriptions; slash invocations reply ephemerally (visible only to
-the invoker) while `.` invocations reply publicly — except captions, whose image result always
-replies publicly regardless of invocation method. The other cogs are prefix-only.
+Moderation, palantir, management, help, captions, and aidetect commands are also available as
+`/` slash commands with autocomplete descriptions; slash invocations reply ephemerally (visible
+only to the invoker) while `.` invocations reply publicly — except captions and aidetect, whose
+results always reply publicly regardless of invocation method. The other cogs are prefix-only.
 
 ### Triggers
 
@@ -220,6 +221,15 @@ dark ink fully enclosed by that bubble's own pixels, leaving its outline intact)
 `Region(box=...)` per index in the order given — pass multiple indices for a multi-bubble image
 like `nanachi`. Review the output image before wiring it into a `Template`.
 
+### AI Detect
+
+`.aicheck` / `/aicheck [url]` estimates whether an image is AI-generated, via the Sightengine
+`genai` model — attach an image, pass a URL, or reply to an image message. Right-click a message
+→ **Apps** → **Check if AI** does the same without a command. Results (a percentage + verdict)
+always post publicly. Requires `SIGHTENGINE_API_USER` / `SIGHTENGINE_API_SECRET` in `.env` (a
+free account at [sightengine.com](https://sightengine.com)); without them, the command replies
+that detection isn't configured instead of scoring. It's a probabilistic estimate, not proof.
+
 ### Help
 
 `.help` / `/help` lists every command you can currently use, grouped by cog, with a one-line
@@ -288,6 +298,9 @@ archiving is turned on.
      cp .env.example .env
      ```
    - Open `.env` and replace `your_bot_token_here` with your actual Discord Bot Token.
+   - Optionally, set `SIGHTENGINE_API_USER` / `SIGHTENGINE_API_SECRET` (free account at
+     [sightengine.com](https://sightengine.com)) to enable the [AI Detect](#ai-detect) `.aicheck`
+     command; leave them blank to skip it.
 
 3. **Invite the Bot to your Server:**
    - In the Developer Portal, go to **OAuth2** -> **URL Generator**.
