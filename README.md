@@ -196,9 +196,15 @@ base image replies with an error instead of crashing.
 Each image's blank text area is defined in code as a `Region(box=(x1, y1, x2, y2))` in
 `cogs/captions.py` — **two pixel points**, not four independent values: `(x1, y1)` is the
 region's top-left corner and `(x2, y2)` is its bottom-right corner, both measured from the
-image's own top-left origin `(0, 0)`. Adding a new image means measuring these two corners
-(e.g. by hovering over them in any image editor that shows cursor pixel position) and adding
-a new `Template` + thin command function alongside `MAKIMA`/`makima`.
+image's own top-left origin `(0, 0)`. Adding a new image means getting these two corners and
+adding a new `Template` + thin command function alongside `MAKIMA`/`makima`.
+
+To prep a base image that still has dialogue text in its speech bubble, run
+`python scripts/detect_bubble.py <input.png> <output.png>`: it auto-detects the bubble as the
+largest fully-enclosed light region, erases the text inside it while leaving the bubble's own
+outline intact, and prints the `Region(box=...)` to paste into `cogs/captions.py`. It assumes a
+single bubble that's the largest enclosed light area in the image — review the output image
+before wiring it into a `Template`.
 
 ### Help
 
