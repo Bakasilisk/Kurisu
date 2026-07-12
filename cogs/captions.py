@@ -17,7 +17,7 @@ MAX_TEXT_LENGTH = 200
 @dataclass(frozen=True)
 class Region:
     box: tuple[int, int, int, int]  # (left, top, right, bottom) pixel bounding box
-    max_font_size: int = 48
+    max_font_size: int = 36
     min_font_size: int = 10
     padding: int = 6
     fill: str = "black"
@@ -34,7 +34,7 @@ MAKIMA = Template(
     name="makima",
     image_path=os.path.join(IMAGE_DIR, "Makima.png"),
     regions=(
-        Region(box=(63, 84, 200, 220)),
+        Region(box=(55, 45, 235, 245)),
     ),
 )
 
@@ -130,7 +130,7 @@ class Captions(commands.Cog):
         await ctx.reply(file=file)
 
     @commands.hybrid_command(name="makima", description="Caption the Makima image.")
-    async def makima(self, ctx, text1: str):
+    async def makima(self, ctx, *, text1: str):
         await self._render_and_send(ctx, MAKIMA, [text1])
 
 
