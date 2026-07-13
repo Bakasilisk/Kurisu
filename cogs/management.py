@@ -177,6 +177,50 @@ class Management(commands.Cog):
     def _toggleable_names(self) -> set[str]:
         return {name for name in _discover_cogs() if name not in ("management", "help")}
 
+    def _matching_extensions(self, current: str, *, loaded: bool | None = None) -> list[app_commands.Choice[str]]:
+        """Cog short names matching `current`, optionally filtered to those that
+        are (or aren't) currently loaded — so e.g. `load`'s autocomplete only
+        offers cogs that can actually be loaded."""
+        current_lower = current.lower()
+        choices = []
+        for name, ext in sorted(_discover_cogs().items()):
+            if loaded is not None and (ext in self.bot.extensions) != loaded:
+                continue
+            if current_lower in name.lower():
+                choices.append(app_commands.Choice(name=name, value=name))
+        return choices[:25]
+
+    async def _unloaded_autocomplete(self, interaction: discord.Interaction, current: str):
+        return self._matching_extensions(current, loaded=False)
+
+    async def _loaded_autocomplete(self, interaction: discord.Interaction, current: str):
+        return self._matching_extensions(current, loaded=True)
+
+    def _matching_toggleable(
+        self, current: str, guild_id: int | None, *, enabled: bool | None = None
+    ) -> list[app_commands.Choice[str]]:
+        """Toggleable cog names matching `current`, optionally filtered to those
+        that are (or aren't) currently enabled in this guild."""
+        current_lower = current.lower()
+        disabled = set()
+        if guild_id is not None:
+            guild_conf = self.config["guilds"].get(str(guild_id))
+            if guild_conf:
+                disabled = set(guild_conf.get("disabled_cogs", []))
+        choices = []
+        for name in sorted(self._toggleable_names()):
+            if enabled is not None and (name not in disabled) != enabled:
+                continue
+            if current_lower in name.lower():
+                choices.append(app_commands.Choice(name=name, value=name))
+        return choices[:25]
+
+    async def _disabled_feature_autocomplete(self, interaction: discord.Interaction, current: str):
+        return self._matching_toggleable(current, interaction.guild_id, enabled=False)
+
+    async def _enabled_feature_autocomplete(self, interaction: discord.Interaction, current: str):
+        return self._matching_toggleable(current, interaction.guild_id, enabled=True)
+
     @staticmethod
     async def _reply(ctx, *args, **kwargs):
         """ctx.reply, but ephemeral (visible only to the invoker) when the command
@@ -268,6 +312,7 @@ class Management(commands.Cog):
 
     @manage_cogs.command(name="load", description="Load a cog by name.")
     @commands.is_owner()
+    @app_commands.autocomplete(name=_unloaded_autocomplete)
     async def load_cog(self, ctx, name: str):
         """Load a cog by name."""
         ext = _to_extension(name)
@@ -278,6 +323,7 @@ class Management(commands.Cog):
 
     @manage_cogs.command(name="unload", description="Unload a cog by name.")
     @commands.is_owner()
+    @app_commands.autocomplete(name=_loaded_autocomplete)
     async def unload_cog(self, ctx, name: str):
         """Unload a cog by name."""
         if _to_short_name(name) == "management":
@@ -293,6 +339,7 @@ class Management(commands.Cog):
 
     @manage_cogs.command(name="reload", description="Reload a cog by name.")
     @commands.is_owner()
+    @app_commands.autocomplete(name=_loaded_autocomplete)
     async def reload_cog(self, ctx, name: str):
         """Reload a cog by name."""
         ext = _to_extension(name)
@@ -420,6 +467,7 @@ class Management(commands.Cog):
     @feature.command(name="enable", description="Enable a cog's behavior in this server.")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
+    @app_commands.autocomplete(name=_disabled_feature_autocomplete)
     async def feature_enable(self, ctx, name: str):
         """Enable a cog's behavior in this server."""
         if name not in self._toggleable_names():
@@ -433,6 +481,7 @@ class Management(commands.Cog):
     @feature.command(name="disable", description="Disable a cog's behavior in this server.")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
+    @app_commands.autocomplete(name=_enabled_feature_autocomplete)
     async def feature_disable(self, ctx, name: str):
         """Disable a cog's behavior in this server."""
         if name not in self._toggleable_names():

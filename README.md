@@ -323,7 +323,7 @@ at most 10 pending reminders at once.
 
 `.help` / `/help` lists the cogs you have any usable command in. `.help <cog>` /
 `/help cog:<cog>` (case-insensitive) then lists that cog's commands you can use, with a one-line
-description each.
+description each. `/help`'s `cog` option autocompletes to the cogs you can use.
 
 ### Management
 
@@ -344,6 +344,10 @@ Server admins (`Manage Server`):
 | Command | Does |
 |---|---|
 | `feature list/enable/disable <name>` | Soft-disable a cog's behavior in their own guild only |
+
+The `name` option on `/cog load/unload/reload` and `/feature enable/disable` autocompletes,
+scoped to what's actually actionable (e.g. `load` only suggests currently-unloaded cogs,
+`feature enable` only suggests cogs currently disabled in that server).
 
 By default, Discord hides the `/` versions of the owner-only commands from anyone but a
 server Administrator, and the `feature` commands from anyone without `Manage Server` — as
