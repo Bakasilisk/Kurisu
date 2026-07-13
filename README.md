@@ -128,12 +128,15 @@ to 5, capped at 25.
 `stats backfill` with no `days` scans the entire server — every readable text/announcement
 channel, thread (active and archived, including forum posts), and voice/stage channel's text
 chat — full history, which is rate-limit-safe but can take a while on a large server; pass
-`days` to limit it to a recent window instead. It's idempotent: a day already covered by live
-message tracking is never re-seeded, so re-running (e.g. after inviting the bot to more
-channels) reseeds only what's still missing instead of double-counting.
+`days` to limit it to a recent window instead. It seeds everything from before the exact moment
+live tracking started for this server, so the partial day collection began on is captured too,
+not just full days. It's idempotent: re-running (e.g. after inviting the bot to more channels)
+only replaces its own previously-seeded data, never live-tracked data.
 
 `stats reset` wipes all of a server's stats (messages, reactions, voice, joins/leaves, backfill
-history) — irreversible, so it no-ops with a warning unless run as `stats reset confirm`.
+history) — irreversible, so it no-ops with a warning unless run as `stats reset confirm`. Existing
+databases migrate automatically on the first launch after an update, but `stats reset confirm`
+(or a fresh `stats.db`) gives the cleanest numbers after a stats-schema change like this one.
 
 ### Verification
 

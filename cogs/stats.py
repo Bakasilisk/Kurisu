@@ -144,14 +144,15 @@ class Stats(commands.Cog):
         # FLUSH_INTERVAL_SECONDS (the repo's buffer-then-flush rhythm — see
         # leveling/palantir). Keyed by the same tuples as each table's
         # primary key; values are mutable lists so increments are in place.
-        self._msg_acc: dict[tuple[int, str, int, int], list[int]] = defaultdict(lambda: [0, 0, 0])
-        self._hourly_acc: dict[tuple[int, str, int, int], int] = defaultdict(int)
+        self._msg_acc: dict[tuple[int, str, int, int, int], list[int]] = defaultdict(lambda: [0, 0, 0])
+        self._hourly_acc: dict[tuple[int, str, int, int, int], int] = defaultdict(int)
         self._reaction_acc: dict[tuple[int, str, int], list[int]] = defaultdict(lambda: [0, 0])
         self._voice_acc: dict[tuple[int, str, int], int] = defaultdict(int)
         self._membership_acc: dict[tuple[int, str], list[int]] = defaultdict(lambda: [0, 0])
-        # (guild_id, day) pairs marked live by on_message only — see live_days
-        # table above. A set, not a dict, since membership is all that matters.
-        self._live_days_acc: set[tuple[int, str]] = set()
+        # guild_id -> earliest ISO8601 live_since seen this buffer cycle
+        # (earliest-wins merge in _merge_back; first-write-wins at the DB
+        # level via INSERT OR IGNORE in _write_snapshot).
+        self._meta_acc: dict[int, str] = {}
         self._acc_lock = asyncio.Lock()
         self._dirty = False
 
@@ -188,6 +189,16 @@ class Stats(commands.Cog):
     def _init_schema(self) -> None:
         with self._db_lock:
             self._db.execute("PRAGMA journal_mode=WAL")
+
+            # Migration guard: an existing pre-`src` DB has a `messages` table
+            # with no `src` column — rebuild it (and `hourly`) in place, once.
+            # A brand-new DB has no `messages` table yet, so `cols` is empty
+            # and CREATE TABLE IF NOT EXISTS below just creates the new
+            # schema directly — no migration needed.
+            cols = {row[1] for row in self._db.execute("PRAGMA table_info(messages)").fetchall()}
+            if cols and "src" not in cols:
+                self._migrate_add_src_unsafe()
+
             self._db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS messages (
@@ -198,7 +209,8 @@ class Stats(commands.Cog):
                     count INTEGER NOT NULL DEFAULT 0,
                     words INTEGER NOT NULL DEFAULT 0,
                     chars INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (guild_id, day, user_id, channel_id)
+                    src INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (guild_id, day, user_id, channel_id, src)
                 )
                 """
             )
@@ -213,7 +225,8 @@ class Stats(commands.Cog):
                     user_id INTEGER NOT NULL,
                     hour INTEGER NOT NULL,
                     count INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (guild_id, day, user_id, hour)
+                    src INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (guild_id, day, user_id, hour, src)
                 )
                 """
             )
@@ -258,20 +271,77 @@ class Stats(commands.Cog):
                 )
                 """
             )
-            # A day becomes "live" for a guild the moment on_message records a
-            # message on it (never written by backfill) — see _run_backfill,
-            # which uses this table to figure out which days it's allowed to
-            # (re)seed without double-counting live-ingested data.
+            # The instant collection began for a guild, set once by whichever
+            # of on_message / backfill gets there first (INSERT OR IGNORE —
+            # earliest wins). _run_backfill uses this as the timestamp
+            # boundary: seed everything strictly before it, skip everything
+            # at/after it (owned by live ingest) — see _run_backfill.
             self._db.execute(
                 """
-                CREATE TABLE IF NOT EXISTS live_days (
-                    guild_id INTEGER NOT NULL,
-                    day TEXT NOT NULL,
-                    PRIMARY KEY (guild_id, day)
+                CREATE TABLE IF NOT EXISTS meta (
+                    guild_id INTEGER NOT NULL PRIMARY KEY,
+                    live_since TEXT NOT NULL
                 )
                 """
             )
+            self._db.execute("DROP TABLE IF EXISTS live_days")
             self._db.commit()
+
+    def _migrate_add_src_unsafe(self) -> None:
+        """Rebuild `messages`/`hourly` with `src` added to the PRIMARY KEY,
+        migrating existing rows in as src=0 (they were live/legacy) — SQLite
+        can't ALTER a PRIMARY KEY, so this is the standard rename-rebuild.
+        Caller must already hold _db_lock; runs at most once per DB, gated by
+        the `src`-column check in _init_schema."""
+        self._db.execute("ALTER TABLE messages RENAME TO messages_old")
+        self._db.execute(
+            """
+            CREATE TABLE messages (
+                guild_id INTEGER NOT NULL,
+                day TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                count INTEGER NOT NULL DEFAULT 0,
+                words INTEGER NOT NULL DEFAULT 0,
+                chars INTEGER NOT NULL DEFAULT 0,
+                src INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, day, user_id, channel_id, src)
+            )
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO messages (guild_id, day, user_id, channel_id, count, words, chars, src)
+            SELECT guild_id, day, user_id, channel_id, count, words, chars, 0 FROM messages_old
+            """
+        )
+        self._db.execute("DROP TABLE messages_old")
+
+        self._db.execute("ALTER TABLE hourly RENAME TO hourly_old")
+        self._db.execute(
+            """
+            CREATE TABLE hourly (
+                guild_id INTEGER NOT NULL,
+                day TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                hour INTEGER NOT NULL,
+                count INTEGER NOT NULL DEFAULT 0,
+                src INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, day, user_id, hour, src)
+            )
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO hourly (guild_id, day, user_id, hour, count, src)
+            SELECT guild_id, day, user_id, hour, count, 0 FROM hourly_old
+            """
+        )
+        self._db.execute("DROP TABLE hourly_old")
+        # Indexes on the old tables are dropped along with them above; the
+        # CREATE INDEX IF NOT EXISTS statements right after this call (in
+        # _init_schema) recreate them on the rebuilt tables.
+        self._db.commit()
 
     # --- Buffer -> flush --------------------------------------------------
 
@@ -285,14 +355,14 @@ class Stats(commands.Cog):
             dict(self._reaction_acc),
             dict(self._voice_acc),
             dict(self._membership_acc),
-            set(self._live_days_acc),
+            dict(self._meta_acc),
         )
         self._msg_acc.clear()
         self._hourly_acc.clear()
         self._reaction_acc.clear()
         self._voice_acc.clear()
         self._membership_acc.clear()
-        self._live_days_acc.clear()
+        self._meta_acc.clear()
         self._dirty = False
         return snapshot
 
@@ -300,7 +370,7 @@ class Stats(commands.Cog):
         """Restore a drained-but-failed-to-write snapshot into the live
         accumulators (additively, so it combines correctly with anything
         accumulated in the meantime) — the retry path for a flush failure."""
-        msg, hourly, reactions, voice, membership, live_days = snapshot
+        msg, hourly, reactions, voice, membership, meta = snapshot
         for key, vals in msg.items():
             cur = self._msg_acc[key]
             cur[0] += vals[0]
@@ -318,9 +388,11 @@ class Stats(commands.Cog):
             cur = self._membership_acc[key]
             cur[0] += vals[0]
             cur[1] += vals[1]
-        self._live_days_acc |= live_days
+        for g, iso in meta.items():
+            cur = self._meta_acc.get(g)
+            self._meta_acc[g] = iso if cur is None else min(cur, iso)
 
-    def _write_snapshot(self, msg, hourly, reactions, voice, membership, live_days) -> None:
+    def _write_snapshot(self, msg, hourly, reactions, voice, membership, meta) -> None:
         """Blocking: executemany UPSERT each non-empty accumulator into its
         table. Called via asyncio.to_thread from _flush_now, or directly
         (blocking is fine — we're shutting down) from cog_unload."""
@@ -328,23 +400,23 @@ class Stats(commands.Cog):
             if msg:
                 self._db.executemany(
                     """
-                    INSERT INTO messages (guild_id, day, user_id, channel_id, count, words, chars)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(guild_id, day, user_id, channel_id) DO UPDATE SET
+                    INSERT INTO messages (guild_id, day, user_id, channel_id, src, count, words, chars)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(guild_id, day, user_id, channel_id, src) DO UPDATE SET
                         count = count + excluded.count,
                         words = words + excluded.words,
                         chars = chars + excluded.chars
                     """,
-                    [(g, d, u, c, v[0], v[1], v[2]) for (g, d, u, c), v in msg.items()],
+                    [(g, d, u, c, s, v[0], v[1], v[2]) for (g, d, u, c, s), v in msg.items()],
                 )
             if hourly:
                 self._db.executemany(
                     """
-                    INSERT INTO hourly (guild_id, day, user_id, hour, count)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(guild_id, day, user_id, hour) DO UPDATE SET count = count + excluded.count
+                    INSERT INTO hourly (guild_id, day, user_id, hour, src, count)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(guild_id, day, user_id, hour, src) DO UPDATE SET count = count + excluded.count
                     """,
-                    [(g, d, u, h, c) for (g, d, u, h), c in hourly.items()],
+                    [(g, d, u, h, s, c) for (g, d, u, h, s), c in hourly.items()],
                 )
             if reactions:
                 self._db.executemany(
@@ -377,10 +449,10 @@ class Stats(commands.Cog):
                     """,
                     [(g, d, v[0], v[1]) for (g, d), v in membership.items()],
                 )
-            if live_days:
+            if meta:
                 self._db.executemany(
-                    "INSERT OR IGNORE INTO live_days (guild_id, day) VALUES (?, ?)",
-                    list(live_days),
+                    "INSERT OR IGNORE INTO meta (guild_id, live_since) VALUES (?, ?)",
+                    list(meta.items()),
                 )
             self._db.commit()
 
@@ -460,16 +532,20 @@ class Stats(commands.Cog):
     # --- Ingest -------------------------------------------------------------
 
     async def _accumulate_message(
-        self, guild_id: int, day: str, hour: int, user_id: int, channel_id: int, *, words: int, chars: int
+        self, guild_id: int, day: str, hour: int, user_id: int, channel_id: int, *,
+        words: int, chars: int, src: int = 0,
     ) -> None:
         """Shared by on_message and the backfill task, so both feed the same
-        accumulators/flush path (backfill only ever calls this one)."""
+        accumulators/flush path (backfill only ever calls this one). `src`
+        distinguishes live ingest (0, the default) from backfill (1) so the
+        two never merge into the same row — see the meta/live_since split in
+        _run_backfill."""
         async with self._acc_lock:
-            vals = self._msg_acc[(guild_id, day, user_id, channel_id)]
+            vals = self._msg_acc[(guild_id, day, user_id, channel_id, src)]
             vals[0] += 1
             vals[1] += words
             vals[2] += chars
-            self._hourly_acc[(guild_id, day, user_id, hour)] += 1
+            self._hourly_acc[(guild_id, day, user_id, hour, src)] += 1
             self._dirty = True
 
     @commands.Cog.listener()
@@ -486,10 +562,12 @@ class Stats(commands.Cog):
             words=len(message.content.split()), chars=len(message.content),
         )
         # Live path only — never inside _accumulate_message, which backfill
-        # also calls. This is what lets _run_backfill tell "already covered
-        # by live ingest" days apart from "needs seeding" days.
+        # also calls. Records the earliest instant live ingest has seen a
+        # message for this guild; _run_backfill reads it back as the
+        # timestamp boundary between "seed" and "already owned by live".
+        iso = message.created_at.astimezone(timezone.utc).isoformat()
         async with self._acc_lock:
-            self._live_days_acc.add((guild.id, day))
+            self._meta_acc.setdefault(guild.id, iso)
             self._dirty = True
 
     async def _handle_reaction(self, reaction: discord.Reaction, user, *, delta: int) -> None:
@@ -979,9 +1057,12 @@ class Stats(commands.Cog):
         = the entire server history (can take a while on a large server, but
         discord.py auto-throttles pagination so it can't outrun the rate
         limit). Only seeds messages/words/chars/hourly — reactions/voice
-        can't be recovered retroactively. Idempotent: re-running only
-        reseeds days live ingest hasn't already recorded, so it's safe to
-        run again (e.g. after inviting the bot to more channels)."""
+        can't be recovered retroactively. Seeds everything strictly before
+        the instant collection started for this server (never anything at or
+        after — that's live ingest's territory), so the partial startup day
+        is captured too. Idempotent: re-running only replaces its own
+        previously-seeded rows, never live ones, so it's safe to run again
+        (e.g. after inviting the bot to more channels)."""
         guild = ctx.guild
         if guild.id in self._backfill_in_progress:
             await self._reply(ctx, "A backfill is already running for this server — wait for it to finish.")
@@ -1036,25 +1117,39 @@ class Stats(commands.Cog):
                 except (discord.Forbidden, discord.HTTPException):
                     pass
 
+    def _ensure_live_since(self, guild_id: int, now_iso: str) -> str:
+        """Blocking: seed `meta.live_since` with `now_iso` if this guild has
+        none yet (INSERT OR IGNORE — a no-op if on_message already set one),
+        then read back the effective value. Seeding on first-ever backfill
+        (before any live message) means backfill owns everything before this
+        moment and live ingest owns everything from it forward."""
+        with self._db_lock:
+            self._db.execute(
+                "INSERT OR IGNORE INTO meta (guild_id, live_since) VALUES (?, ?)",
+                (guild_id, now_iso),
+            )
+            self._db.commit()
+            row = self._db.execute(
+                "SELECT live_since FROM meta WHERE guild_id=?", (guild_id,)
+            ).fetchone()
+            return row[0]
+
     def _delete_backfill_range(self, guild_id: int, after_day: str | None) -> None:
-        """Blocking: delete the messages/hourly rows backfill is about to
-        rebuild — every row in scope for this guild whose day is NOT a live
-        day, so a re-run reseeds cleanly instead of double-counting. Live
-        data (a day on which on_message has recorded anything) is never
-        touched, since it's excluded by the NOT IN subquery."""
+        """Blocking: delete only backfill-sourced (src=1) rows for this guild
+        so a re-run reseeds cleanly instead of piling on top of last time.
+        Live rows (src=0) are a separate PRIMARY KEY dimension, so this never
+        touches them — including on the boundary day, which can hold both."""
         with self._db_lock:
             for table in ("messages", "hourly"):
                 if after_day is not None:
                     self._db.execute(
-                        f"DELETE FROM {table} WHERE guild_id=? AND day>=? "
-                        "AND day NOT IN (SELECT day FROM live_days WHERE guild_id=?)",
-                        (guild_id, after_day, guild_id),
+                        f"DELETE FROM {table} WHERE guild_id=? AND src=1 AND day>=?",
+                        (guild_id, after_day),
                     )
                 else:
                     self._db.execute(
-                        f"DELETE FROM {table} WHERE guild_id=? "
-                        "AND day NOT IN (SELECT day FROM live_days WHERE guild_id=?)",
-                        (guild_id, guild_id),
+                        f"DELETE FROM {table} WHERE guild_id=? AND src=1",
+                        (guild_id,),
                     )
             self._db.commit()
 
@@ -1064,15 +1159,14 @@ class Stats(commands.Cog):
         sources_skipped = 0
         messages_seen = 0
         try:
-            # Flush first so the live-day snapshot below reflects the last
-            # few seconds of buffered activity too, then delete-then-reseed
-            # the backfill's own range (never touches live-owned days) so a
+            # Flush first so the ensure/read below reflects the last few
+            # seconds of buffered activity too, then delete-then-reseed the
+            # backfill's own range (src=1 only, never touches live rows) so a
             # re-run is idempotent instead of piling on top of last time.
             await self._flush_now()
-            live_day_rows = await asyncio.to_thread(
-                self._query, "SELECT day FROM live_days WHERE guild_id=?", (guild.id,)
-            )
-            live_days = {row[0] for row in live_day_rows}
+            now_iso = discord.utils.utcnow().isoformat()
+            live_since_str = await asyncio.to_thread(self._ensure_live_since, guild.id, now_iso)
+            live_since_dt = datetime.fromisoformat(live_since_str)
 
             after_day = self._day_str(after) if after is not None else None
             await asyncio.to_thread(self._delete_backfill_range, guild.id, after_day)
@@ -1086,13 +1180,14 @@ class Stats(commands.Cog):
                     async for message in source.history(limit=None, after=after):
                         if message.author.bot:
                             continue
+                        if message.created_at >= live_since_dt:
+                            continue  # at/after collection start — owned by live ingest
                         day = self._day_str(message.created_at)
-                        if day in live_days:
-                            continue  # this day is already owned by live ingest
                         hour = message.created_at.astimezone(timezone.utc).hour
                         await self._accumulate_message(
                             guild.id, day, hour, message.author.id, source.id,
                             words=len(message.content.split()), chars=len(message.content),
+                            src=1,
                         )
                         messages_seen += 1
                 except (discord.Forbidden, discord.HTTPException):
@@ -1124,7 +1219,7 @@ class Stats(commands.Cog):
     @has_permissions_or_owner(manage_guild=True)
     @commands.guild_only()
     async def stats_reset(self, ctx, confirm: str = None):
-        """Wipe every message/hour/reaction/voice/membership/live-day row for
+        """Wipe every message/hour/reaction/voice/membership/meta row for
         this server. Destructive and irreversible, so it requires the
         literal argument `confirm` (`.stats reset confirm` /
         `/stats reset confirm:confirm`) — anything else just shows this
@@ -1151,7 +1246,7 @@ class Stats(commands.Cog):
                     del acc[key]
             for key in [k for k in self._membership_acc if k[0] == guild_id]:
                 del self._membership_acc[key]
-            self._live_days_acc = {d for d in self._live_days_acc if d[0] != guild_id}
+            self._meta_acc.pop(guild_id, None)
             for key in [k for k in self._voice_sessions if k[0] == guild_id]:
                 del self._voice_sessions[key]
             self._backfill_in_progress.discard(guild_id)
@@ -1160,7 +1255,7 @@ class Stats(commands.Cog):
 
     def _delete_guild_rows(self, guild_id: int) -> None:
         with self._db_lock:
-            for table in ("messages", "hourly", "reactions", "voice", "membership", "live_days"):
+            for table in ("messages", "hourly", "reactions", "voice", "membership", "meta"):
                 self._db.execute(f"DELETE FROM {table} WHERE guild_id=?", (guild_id,))
             self._db.commit()
 
