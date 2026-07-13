@@ -321,7 +321,8 @@ at most 10 pending reminders at once.
 
 ### Help
 
-`.help` / `/help` lists every command you can currently use, grouped by cog, with a one-line
+`.help` / `/help` lists the cogs you have any usable command in. `.help <cog>` /
+`/help cog:<cog>` (case-insensitive) then lists that cog's commands you can use, with a one-line
 description each.
 
 ### Management
