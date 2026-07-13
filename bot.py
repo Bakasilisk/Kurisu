@@ -69,6 +69,7 @@ INITIAL_EXTENSIONS = [
     "cogs.trace",
     "cogs.anilist",
     "cogs.reminders",
+    "cogs.webapi",
 ]
 
 _synced = False

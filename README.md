@@ -19,6 +19,7 @@ local SQLite database (`stats.db`) for server statistics. Command prefix is `.`.
   [Trace Anime](#trace-anime) ·
   [AniList](#anilist) ·
   [Reminders](#reminders) ·
+  [Web API](#web-api) ·
   [Help](#help) ·
   [Management](#management) ·
   [Logging & data files](#logging--data-files)
@@ -359,6 +360,28 @@ The bot loads each cog independently at startup — if one fails to load, the fa
 logged and the rest of the bot still starts. Extensions unloaded via `.cog unload` stay
 unloaded across restarts, and `management` itself can't be unloaded.
 
+### Web API
+
+A read-only HTTP/JSON API (`cogs/webapi.py`) for a separate web frontend — mirrors the `stats`
+cog's queries as JSON instead of Discord embeds, plus name/avatar resolution from the bot's live
+cache. Infra, not a per-guild toggleable cog (like management/help).
+
+Requires `WEBAPI_KEY` in `.env` (comma-separated to accept multiple keys during rotation) — every
+request needs a matching `X-API-Key` header, or the server doesn't start at all. Binds to
+`WEBAPI_HOST`/`WEBAPI_PORT` (default `127.0.0.1:8080`); not exposed publicly by the bot itself — a
+frontend on the same host calls it over localhost.
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/meta` | Bot owner id, guild count |
+| `GET /api/guilds` | Tracked guilds (id/name/icon) |
+| `GET /api/guilds/{id}/overview` | Server totals, trend, top posters |
+| `GET /api/guilds/{id}/top` \| `/channels` \| `/voice` | Full ranked lists (`period=week/month/year/all`) |
+| `GET /api/guilds/{id}/activity` | Hour×weekday grid |
+| `GET /api/guilds/{id}/growth` | Joins/leaves/net |
+| `GET /api/guilds/{id}/members/{uid}` | One member's profile |
+| `GET /api/guilds/{id}/quietest` | Least-active members (last 30 days) |
+
 ### Logging & data files
 
 In addition to the console, everything is written to a rotating logfile at `logs/kurisu.log`
@@ -405,6 +428,9 @@ archiving is turned on.
      command; leave them blank to skip it.
    - Optionally, set `TRACE_MOE_API_KEY` to raise the rate limit for [Trace Anime](#trace-anime)'s
      `.trace` command; it works anonymously without one.
+   - Optionally, set `WEBAPI_KEY` (plus `WEBAPI_HOST`/`WEBAPI_PORT` if not using the defaults) to
+     enable the [Web API](#web-api) cog for a separate web frontend; leave `WEBAPI_KEY` blank to
+     skip it.
 
 3. **Invite the Bot to your Server:**
    - In the Developer Portal, go to **OAuth2** -> **URL Generator**.
