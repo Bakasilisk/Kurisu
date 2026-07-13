@@ -3,8 +3,6 @@ from discord.ext import commands
 
 from .management import reply_ephemeral_aware
 
-FIELD_VALUE_LIMIT = 1024
-
 
 class Help(commands.Cog):
     def __init__(self, bot):
@@ -23,9 +21,7 @@ class Help(commands.Cog):
             text += f" / `/{command.qualified_name}`"
         return f"{text} — {command.short_doc or 'No description.'}"
 
-    @commands.hybrid_command(name="help", description="Show the commands you can use here, grouped by category.")
-    async def help_command(self, ctx):
-        """Show the commands you can use here, grouped by category."""
+    async def _accessible_by_cog(self, ctx) -> dict[str, list[commands.Command]]:
         by_cog: dict[str, list[commands.Command]] = {}
         for command in self.bot.walk_commands():
             if command.hidden:
@@ -37,21 +33,43 @@ class Help(commands.Cog):
             if not allowed:
                 continue
             by_cog.setdefault(command.cog_name or "Other", []).append(command)
+        return by_cog
 
-        embed = discord.Embed(title="📖 Commands", color=discord.Color.blurple())
+    @commands.hybrid_command(
+        name="help",
+        description="List the cogs you can use here, or view one cog's commands.",
+    )
+    @discord.app_commands.describe(cog="A cog to show commands for, e.g. Moderation.")
+    async def help_command(self, ctx, cog: str = None):
+        """List the cogs you can use here, or view one cog's commands."""
+        by_cog = await self._accessible_by_cog(ctx)
 
         if not by_cog:
-            embed.description = "Nothing to show."
+            embed = discord.Embed(title="📖 Commands", description="Nothing to show.", color=discord.Color.blurple())
             await self._reply(ctx, embed=embed)
             return
 
-        for cog_name in sorted(by_cog):
-            commands_ = sorted(by_cog[cog_name], key=lambda c: c.qualified_name)
-            value = "\n".join(self._line(command) for command in commands_)
-            if len(value) > FIELD_VALUE_LIMIT:
-                value = value[: FIELD_VALUE_LIMIT - 1] + "…"
-            embed.add_field(name=cog_name, value=value, inline=False)
+        if cog is None:
+            names = sorted(by_cog)
+            description = "\n".join(f"- {name}" for name in names)
+            description += "\n\nUse `.help <cog>` / `/help cog:<cog>` to view a cog's commands."
+            embed = discord.Embed(title="📖 Commands", description=description, color=discord.Color.blurple())
+            await self._reply(ctx, embed=embed)
+            return
 
+        match = next((name for name in by_cog if name.lower() == cog.lower()), None)
+        if match is None:
+            embed = discord.Embed(
+                title="📖 Commands",
+                description=f"No cog named `{cog}`. Available: " + ", ".join(sorted(by_cog)),
+                color=discord.Color.red(),
+            )
+            await self._reply(ctx, embed=embed)
+            return
+
+        commands_ = sorted(by_cog[match], key=lambda c: c.qualified_name)
+        value = "\n".join(self._line(command) for command in commands_)
+        embed = discord.Embed(title=f"📖 {match} Commands", description=value, color=discord.Color.blurple())
         await self._reply(ctx, embed=embed)
 
 
