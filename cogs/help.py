@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from .management import reply_ephemeral_aware
@@ -35,11 +36,21 @@ class Help(commands.Cog):
             by_cog.setdefault(command.cog_name or "Other", []).append(command)
         return by_cog
 
+    async def _cog_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        ctx = await commands.Context.from_interaction(interaction)
+        by_cog = await self._accessible_by_cog(ctx)
+        current_lower = current.lower()
+        names = [name for name in sorted(by_cog) if current_lower in name.lower()]
+        return [app_commands.Choice(name=name, value=name) for name in names[:25]]
+
     @commands.hybrid_command(
         name="help",
         description="List the cogs you can use here, or view one cog's commands.",
     )
-    @discord.app_commands.describe(cog="A cog to show commands for, e.g. Moderation.")
+    @app_commands.describe(cog="A cog to show commands for, e.g. Moderation.")
+    @app_commands.autocomplete(cog=_cog_autocomplete)
     async def help_command(self, ctx, cog: str = None):
         """List the cogs you can use here, or view one cog's commands."""
         by_cog = await self._accessible_by_cog(ctx)
