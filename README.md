@@ -391,6 +391,9 @@ frontend on the same host calls it over localhost.
 | `GET /api/guilds/{id}/leveling` | XP leaderboard from `xp.json` (optional `limit=N`) |
 | `GET /api/guilds/{id}/economy` | Bits leaderboard from `economy.json` (optional `limit=N`) |
 | `GET /api/guilds/{id}/warnings` | Moderation warnings from `warnings.json`, spicy/mod-tier (optional `limit=N`) |
+| `GET /api/guilds/{id}/security` | Cerberus mode/config + live lockdown status, spicy/mod-tier |
+| `GET /api/guilds/{id}/palantir` | Palantir logging config + cached-message count (config only, spicy/mod-tier — surveillance content never exposed) |
+| `GET /api/guilds/{id}/verification` | Verification role/welcome-channel config, spicy/mod-tier |
 
 ### Logging & data files
 

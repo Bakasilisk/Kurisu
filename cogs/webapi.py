@@ -82,6 +82,9 @@ class WebAPI(commands.Cog):
         r.add_get("/api/guilds/{gid}/leveling", self._handle_leveling)
         r.add_get("/api/guilds/{gid}/economy", self._handle_economy)
         r.add_get("/api/guilds/{gid}/warnings", self._handle_warnings)
+        r.add_get("/api/guilds/{gid}/security", self._handle_security)
+        r.add_get("/api/guilds/{gid}/palantir", self._handle_palantir)
+        r.add_get("/api/guilds/{gid}/verification", self._handle_verification)
 
     # --- Lifecycle ------------------------------------------------------
 
@@ -578,6 +581,69 @@ class WebAPI(commands.Cog):
             for uid, warn_list in rows
         ]
         return web.json_response({"entries": entries})
+
+    async def _handle_security(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        conf = self._cog_json("cerberus.json").get(str(guild.id), {})
+        ld = conf.get("lockdown", {}) or {}
+        active = bool(ld.get("active"))
+        expires_at = ld.get("expires_at")
+        now = datetime.now(timezone.utc).timestamp()
+        remaining = max(0, int(expires_at - now)) if (active and expires_at is not None) else 0
+        stay_locked = active and expires_at is None
+        log_channel_id = conf.get("log_channel_id")
+        return web.json_response({
+            "mode": conf.get("mode", "shadow"),
+            "log_channel": self._channel_json(guild, log_channel_id) if log_channel_id is not None else None,
+            "exempt_roles": len(conf.get("exempt_role_ids", [])),
+            "exempt_users": len(conf.get("exempt_user_ids", [])),
+            "protected_roles": len(conf.get("protected_role_ids", [])),
+            "lockdown": {
+                "active": active,
+                "started_at": ld.get("started_at"),
+                "expires_at": expires_at,
+                "remaining_seconds": remaining,
+                "stay_locked": stay_locked,
+            },
+        })
+
+    async def _handle_palantir(self, request: web.Request):
+        # CONFIG + CACHE-SIZE ONLY - the surveillance boundary. palantir_messages.json
+        # holds cached message content/author ids/attachment urls/edit pre-images; this
+        # endpoint reads that file solely to take len() of the guild's dict and must
+        # never surface a cached entry, content string, author, or attachment url.
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        conf = self._cog_json("palantir.json").get(str(guild.id), {})
+        cached = len(self._cog_json("palantir_messages.json").get(str(guild.id), {}))
+        log_channel_id = conf.get("log_channel_id")
+        return web.json_response({
+            "log_channel": self._channel_json(guild, log_channel_id) if log_channel_id is not None else None,
+            "archive_attachments": bool(conf.get("archive_attachments", False)),
+            "muted_categories": conf.get("disabled_categories", []),
+            "cached_messages": cached,
+        })
+
+    async def _handle_verification(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        conf = self._cog_json("verification.json").get(str(guild.id), {})
+        gr = conf.get("granter_role_id")
+        tr = conf.get("target_role_id")
+        wc = conf.get("welcome_channel_id")
+        return web.json_response({
+            "granter_role": self._role_json(guild, gr) if gr is not None else None,
+            "target_role": self._role_json(guild, tr) if tr is not None else None,
+            "welcome_channel": self._channel_json(guild, wc) if wc is not None else None,
+            # verification.py treats welcome_channel_id is not None as "enabled"
+            # (see Verification.verification_welcome_disable, which clears it to
+            # disable welcomes) - mirrored here rather than a separate flag.
+            "welcome_enabled": wc is not None,
+        })
 
 
 async def setup(bot):
