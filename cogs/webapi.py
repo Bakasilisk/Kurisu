@@ -11,7 +11,7 @@ from aiohttp import web
 from discord.ext import commands
 
 from .management import rank_of
-from .storage import data_path
+from .storage import data_path, load_json
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,20 @@ _PERIOD_DAYS = {"week": 7, "month": 30, "year": 365}
 # Mirrors cogs/stats.py's TREND_PERIOD_DAYS, kept as its own constant rather
 # than imported so this cog has zero import-time coupling to cogs/stats.py.
 TREND_PERIOD_DAYS = 30
+
+
+# mirrors cogs/leveling.py's level curve
+def total_xp_for_level(level: int) -> int:
+    """Cumulative XP required to reach the given level from 0."""
+    return 25 * level * (level + 1)
+
+
+def level_from_xp(xp: int) -> int:
+    """The level corresponding to a total XP amount."""
+    level = 0
+    while total_xp_for_level(level + 1) <= xp:
+        level += 1
+    return level
 
 
 def _day_str(dt: datetime) -> str:
@@ -65,6 +79,12 @@ class WebAPI(commands.Cog):
         r.add_get("/api/guilds/{gid}/growth", self._handle_growth)
         r.add_get("/api/guilds/{gid}/members/{uid}", self._handle_member)
         r.add_get("/api/guilds/{gid}/quietest", self._handle_quietest)
+        r.add_get("/api/guilds/{gid}/leveling", self._handle_leveling)
+        r.add_get("/api/guilds/{gid}/economy", self._handle_economy)
+        r.add_get("/api/guilds/{gid}/warnings", self._handle_warnings)
+        r.add_get("/api/guilds/{gid}/security", self._handle_security)
+        r.add_get("/api/guilds/{gid}/palantir", self._handle_palantir)
+        r.add_get("/api/guilds/{gid}/verification", self._handle_verification)
 
     # --- Lifecycle ------------------------------------------------------
 
@@ -146,6 +166,17 @@ class WebAPI(commands.Cog):
         if channel is None:
             return {"id": str(channel_id), "name": "unknown-channel"}
         return {"id": str(channel_id), "name": channel.name}
+
+    def _role_json(self, guild, role_id: int) -> dict:
+        role = guild.get_role(role_id)
+        if role is None:
+            return {"id": str(role_id), "name": "unknown-role"}
+        return {"id": str(role_id), "name": role.name}
+
+    def _cog_json(self, filename: str) -> dict:
+        """Per-request read of a behavioral cog's JSON data file (small files,
+        no caching needed) - keeps this cog decoupled from importing them."""
+        return load_json(data_path(filename))
 
     @staticmethod
     def _guild_json(guild) -> dict:
@@ -436,6 +467,19 @@ class WebAPI(commands.Cog):
         pct_of_server = (total_count / server_total * 100) if server_total else 0.0
         words_per_msg = (total_words / total_count) if total_count else 0.0
 
+        # Harmless (member-readable) enrichment only - leveling and economy.
+        # Warnings are spicy/mod-tier and deliberately excluded here; they
+        # live solely on the /warnings endpoint.
+        guild_xp = self._cog_json("xp.json").get(str(guild.id), {})
+        xp = guild_xp.get(str(uid), 0)
+        lvl_rank = rank_of(((int(k), v) for k, v in guild_xp.items()), key=lambda kv: kv[1], target_id=uid)
+
+        guild_bank = self._cog_json("economy.json").get(str(guild.id), {})
+        bits = guild_bank.get(str(uid), {}).get("balance", 0)
+        econ_rank = rank_of(
+            ((int(k), e.get("balance", 0)) for k, e in guild_bank.items()), key=lambda kv: kv[1], target_id=uid
+        )
+
         return web.json_response({
             "user": self._user_json(guild, uid),
             "total_messages": total_count,
@@ -450,6 +494,8 @@ class WebAPI(commands.Cog):
             "reactions_given": given,
             "reactions_received": received,
             "top_channels": [{"channel": self._channel_json(guild, cid), "count": c} for cid, c in channel_rows],
+            "leveling": {"xp": xp, "level": level_from_xp(xp), "rank": lvl_rank},
+            "economy": {"bits": bits, "rank": econ_rank},
         })
 
     async def _handle_quietest(self, request: web.Request):
@@ -475,6 +521,129 @@ class WebAPI(commands.Cog):
             for m in quietest
         ]
         return web.json_response({"entries": entries})
+
+    async def _handle_leveling(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        limit = self._limit_param(request)
+        guild_xp = self._cog_json("xp.json").get(str(guild.id), {})
+        rows = sorted(((int(uid), xp) for uid, xp in guild_xp.items()), key=lambda kv: kv[1], reverse=True)
+        if limit is not None:
+            rows = rows[:limit]
+        entries = [
+            {"user": self._user_json(guild, uid), "xp": xp, "level": level_from_xp(xp)} for uid, xp in rows
+        ]
+        return web.json_response({"entries": entries})
+
+    async def _handle_economy(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        limit = self._limit_param(request)
+        guild_bank = self._cog_json("economy.json").get(str(guild.id), {})
+        rows = sorted(
+            ((int(uid), entry.get("balance", 0)) for uid, entry in guild_bank.items()),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )
+        if limit is not None:
+            rows = rows[:limit]
+        entries = [{"user": self._user_json(guild, uid), "bits": bal} for uid, bal in rows]
+        return web.json_response({"entries": entries})
+
+    async def _handle_warnings(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        limit = self._limit_param(request)
+        guild_warns = self._cog_json("warnings.json").get(str(guild.id), {})
+        rows = sorted(
+            ((int(uid), warn_list) for uid, warn_list in guild_warns.items()),
+            key=lambda kv: len(kv[1]),
+            reverse=True,
+        )
+        if limit is not None:
+            rows = rows[:limit]
+        entries = [
+            {
+                "user": self._user_json(guild, uid),
+                "count": len(warn_list),
+                "warnings": [
+                    {
+                        "reason": w.get("reason"),
+                        "moderator": self._user_json(guild, w["moderator_id"]) if w.get("moderator_id") is not None else None,
+                        "timestamp": w.get("timestamp"),
+                    }
+                    for w in warn_list
+                ],
+            }
+            for uid, warn_list in rows
+        ]
+        return web.json_response({"entries": entries})
+
+    async def _handle_security(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        conf = self._cog_json("cerberus.json").get(str(guild.id), {})
+        ld = conf.get("lockdown", {}) or {}
+        active = bool(ld.get("active"))
+        expires_at = ld.get("expires_at")
+        now = datetime.now(timezone.utc).timestamp()
+        remaining = max(0, int(expires_at - now)) if (active and expires_at is not None) else 0
+        stay_locked = active and expires_at is None
+        log_channel_id = conf.get("log_channel_id")
+        return web.json_response({
+            "mode": conf.get("mode", "shadow"),
+            "log_channel": self._channel_json(guild, log_channel_id) if log_channel_id is not None else None,
+            "exempt_roles": len(conf.get("exempt_role_ids", [])),
+            "exempt_users": len(conf.get("exempt_user_ids", [])),
+            "protected_roles": len(conf.get("protected_role_ids", [])),
+            "lockdown": {
+                "active": active,
+                "started_at": ld.get("started_at"),
+                "expires_at": expires_at,
+                "remaining_seconds": remaining,
+                "stay_locked": stay_locked,
+            },
+        })
+
+    async def _handle_palantir(self, request: web.Request):
+        # CONFIG + CACHE-SIZE ONLY - the surveillance boundary. palantir_messages.json
+        # holds cached message content/author ids/attachment urls/edit pre-images; this
+        # endpoint reads that file solely to take len() of the guild's dict and must
+        # never surface a cached entry, content string, author, or attachment url.
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        conf = self._cog_json("palantir.json").get(str(guild.id), {})
+        cached = len(self._cog_json("palantir_messages.json").get(str(guild.id), {}))
+        log_channel_id = conf.get("log_channel_id")
+        return web.json_response({
+            "log_channel": self._channel_json(guild, log_channel_id) if log_channel_id is not None else None,
+            "archive_attachments": bool(conf.get("archive_attachments", False)),
+            "muted_categories": conf.get("disabled_categories", []),
+            "cached_messages": cached,
+        })
+
+    async def _handle_verification(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        conf = self._cog_json("verification.json").get(str(guild.id), {})
+        gr = conf.get("granter_role_id")
+        tr = conf.get("target_role_id")
+        wc = conf.get("welcome_channel_id")
+        return web.json_response({
+            "granter_role": self._role_json(guild, gr) if gr is not None else None,
+            "target_role": self._role_json(guild, tr) if tr is not None else None,
+            "welcome_channel": self._channel_json(guild, wc) if wc is not None else None,
+            # verification.py treats welcome_channel_id is not None as "enabled"
+            # (see Verification.verification_welcome_disable, which clears it to
+            # disable welcomes) - mirrored here rather than a separate flag.
+            "welcome_enabled": wc is not None,
+        })
 
 
 async def setup(bot):

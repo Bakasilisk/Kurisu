@@ -12,6 +12,36 @@ Reference for applications consuming the bot's read-only HTTP/JSON API (the `web
 
 This is a **trusted server-to-server API with no per-user authorization**. A valid key grants access to every guild the bot is in and every member's statistics. Consumers (like kurisu-web) must enforce their own user-facing scoping (e.g. "admins only see their own guilds") *before* calling this API. Never expose the API or its key directly to browsers.
 
+### Sensitivity tiers
+
+Every endpoint carries a documented sensitivity tier, `harmless` or `spicy`, to support a **future** per-user access layer: any member would be able to read `harmless` data (their own and others' chat activity and gamification stats), while `spicy` data (moderation actions, security posture, surveillance state, server setup/config) stays mod-only.
+
+**Today, this tier is documentation and response-shape structure only** — it is *not yet enforced* by the API itself. Enforcement currently happens frontend-side (kurisu-web's own guild-scoping) or is expected to happen server-to-server (a trusted consumer decides who sees what); `cogs/webapi.py` does not itself check a per-user role before answering a request. Treat the tier as a contract for how a future auth layer will gate these endpoints, and as a hard rule for this cog's own design: **a spicy field must never be nested inside a harmless endpoint's response** — e.g. warnings are deliberately not part of `/members/{uid}`, they live solely on the spicy `/warnings` endpoint, so that a future harmless-only auth scope can safely expose `/members/{uid}` wholesale without a field-level allowlist.
+
+| Endpoint | Tier |
+|---|---|
+| `/meta`, `/guilds`, `/overview`, `/growth`, `/top`, `/channels`, `/voice`, `/leveling`, `/economy`, `/members/{uid}` | harmless |
+| `/activity`, `/quietest`, `/warnings`, `/security`, `/palantir`, `/verification` | spicy |
+
+Note: `/activity` is tiered **spicy** here by deliberate API-side operator choice, even though the bot's own `.stats activity` command is open to every member in the Discord UI. The two don't have to match — the API's tiering is a separate, intentionally more conservative decision (fine-grained hour×weekday activity patterns are treated as more sensitive in aggregate/API form than a one-off Discord command reply).
+
+### Data sources / cog coverage
+
+Which cogs' data is surfaced through this API, and which are deliberately left out:
+
+| Cog | Surfaced | Notes |
+|---|---|---|
+| stats | yes (existing) | `overview`/`top`/`channels`/`activity`/`voice`/`growth`/`members/{uid}`/`quietest` |
+| leveling | yes | `/leveling` + member enrichment |
+| economy | yes | `/economy` + member enrichment |
+| moderation (warnings) | yes (spicy) | `/warnings` |
+| cerberus | yes (spicy) | `/security` |
+| palantir | config only (spicy) | `/palantir` — **surveillance cache/content never exposed** |
+| verification | config only (spicy) | `/verification` |
+| reminders | no | personal, not guild-scoped |
+| anilist, triggers, captions, aidetect, trace | no | stateless — nothing persisted |
+| management, help, webapi | no | infra cogs |
+
 ### Authentication
 
 Every request — including `/api/meta` — must carry the key in a header:
@@ -200,6 +230,8 @@ Query: `period` (default `month`).
 
 ### GET `/api/guilds/{gid}/members/{uid}`
 
+**Tier:** harmless
+
 Per-member statistics (all-time).
 
 An unknown or departed member is **not** a 404: statistics are looked up regardless, so a user with no recorded data returns zeros with `user.name = "Unknown"`. Treat `total_messages == 0` together with `server_rank == null` as "no data".
@@ -218,7 +250,9 @@ An unknown or departed member is **not** a 404: statistics are looked up regardl
   "voice_seconds": 88421,
   "reactions_given": 1204,
   "reactions_received": 990,
-  "top_channels": [{"channel": {…}, "count": 5120}, …]
+  "top_channels": [{"channel": {…}, "count": 5120}, …],
+  "leveling": {"xp": 4820, "level": 12, "rank": 3},
+  "economy": {"bits": 3150, "rank": 7}
 }
 ```
 
@@ -229,10 +263,15 @@ An unknown or departed member is **not** a 404: statistics are looked up regardl
 - `words_per_msg` — float; `0.0` when the member has no messages.
 - `busiest_hour` — UTC hour (0–23) with the most messages, or `null` if the member has none.
 - `top_channels` — every channel the member has posted in, sorted by count descending.
+- `leveling` — `xp` (cumulative, from `xp.json`, defaults to `0`), `level` (derived via `level_from_xp`), and `rank` (1-based rank by `xp` among users with an `xp.json` entry, or `null` if the member has none).
+- `economy` — `bits` (balance, from `economy.json`, defaults to `0`) and `rank` (1-based rank by balance, or `null` if the member has no entry).
+- **Note:** warnings are deliberately **not** included here. Warnings are spicy/mod-tier data; they live solely on `GET /api/guilds/{gid}/warnings` so this endpoint stays safely member-readable.
 
 ### GET `/api/guilds/{gid}/quietest`
 
-Least-active members over a fixed 30-day window (no `period` parameter).
+**Tier:** spicy
+
+Least-active members over a fixed 30-day window (no `period` parameter). Tiered **spicy** to match the bot itself: the `stats` cog gates `.stats quietest` behind Manage Server (surfacing a "who's least active" call-out list is a moderation-adjacent view), so the API keeps it mod-tier for consistency.
 
 Query: `limit`.
 
@@ -242,6 +281,145 @@ Query: `limit`.
 
 - Covers every **non-bot member currently in the guild's cache**, including members with zero messages — unlike the leaderboards, absence of data is the point here.
 - Sorted by `count` ascending (quietest first), truncated to `limit` after sorting. Without a `limit` the full member list is returned — for a large guild, always pass one.
+
+### GET `/api/guilds/{gid}/leveling`
+
+**Tier:** harmless
+
+XP leaderboard from the `leveling` cog.
+
+Query: `limit`.
+
+```json
+{"entries": [{"user": {…}, "xp": 4820, "level": 12}, …]}
+```
+
+- Sourced from `xp.json` (not `stats.db`) — this is the leveling cog's own cumulative XP counter, independent of message-count stats.
+- `entries` is sorted by `xp` descending, covering every user with an entry in `xp.json` (up to `limit`). No `period` parameter — XP is cumulative, not windowed.
+- `level` is derived from the same level curve the bot itself uses (`total_xp_for_level`/`level_from_xp`, duplicated in `cogs/webapi.py` to avoid importing the `leveling` cog).
+- Eventual consistency: `xp.json` is flushed to disk by the leveling cog roughly every 30 seconds, so values here can trail live activity by up to one flush interval.
+
+### GET `/api/guilds/{gid}/economy`
+
+**Tier:** harmless
+
+Bits-balance leaderboard from the `economy` cog.
+
+Query: `limit`.
+
+```json
+{"entries": [{"user": {…}, "bits": 3150}, …]}
+```
+
+- Sourced from `economy.json` (not `stats.db`).
+- `entries` is sorted by `bits` (balance) descending, covering every user with an entry in `economy.json` (up to `limit`). No `period` parameter.
+- Economy balances save on every change, so this data is fresh (no flush-interval lag, unlike `/leveling`).
+
+### GET `/api/guilds/{gid}/warnings`
+
+**Tier:** spicy
+
+Moderation warnings from the `warnings` cog, one entry per warned user.
+
+Query: `limit`.
+
+```json
+{
+  "entries": [
+    {
+      "user": {"id": "…", "name": "…", "avatar": "…"},
+      "count": 2,
+      "warnings": [
+        {
+          "reason": "spamming in #general",
+          "moderator": {"id": "…", "name": "ModName", "avatar": "…"},
+          "timestamp": "2026-06-01T14:22:00+00:00"
+        },
+        {"reason": "…", "moderator": {…}, "timestamp": "…"}
+      ]
+    }
+  ]
+}
+```
+
+- Sourced from `warnings.json` (not `stats.db`).
+- `entries` is sorted by `count` (number of warnings) descending, covering every user with at least one warning (up to `limit`). No `period` parameter.
+- `moderator` is resolved from the bot's live member cache the same way as `user`. If the moderator has since left the guild (or the cache is cold), it comes back as `{"id": "…", "name": "Unknown", "avatar": null}` rather than a literal `null`. `moderator` is only a literal `null` in the rare case the stored warning itself has no `moderator_id`.
+- This endpoint is **spicy**: unlike `/members/{uid}`, its data is mod-tier and must not be exposed to ordinary members by a consumer.
+
+### GET `/api/guilds/{gid}/security`
+
+**Tier:** spicy
+
+Cerberus (raid/spam defense) configuration and live lockdown status.
+
+```json
+{
+  "mode": "shadow",
+  "log_channel": {"id": "…", "name": "mod-log"},
+  "exempt_roles": 2,
+  "exempt_users": 1,
+  "protected_roles": 1,
+  "lockdown": {
+    "active": false,
+    "started_at": null,
+    "expires_at": null,
+    "remaining_seconds": 0,
+    "stay_locked": false
+  }
+}
+```
+
+- Sourced from `cerberus.json` (not `stats.db`).
+- `mode` — `"shadow"` (detect + alert only) or `"active"` (also takes action); defaults to `"shadow"` if unconfigured.
+- `log_channel` — the configured Cerberus alert channel, or `null` if unset.
+- `exempt_roles` / `exempt_users` / `protected_roles` — **counts only**, not the actual role/user lists — a consumer that needs the specifics is expected to be a mod using the bot's own `.cerberus exempt list` / `.cerberus protectedrole list` commands, not this API.
+- `lockdown.active` — whether a guild-wide lockdown is currently in effect.
+- `lockdown.remaining_seconds` — seconds until auto-lift, `0` if not active or if `stay_locked`.
+- `lockdown.stay_locked` — `true` when the lockdown has no `expires_at` (a repeat-trigger lockdown that holds until a mod runs `.cerberus unlock`), matching the same "stay locked" semantics as `cogs/cerberus.py`'s `_start_lockdown`.
+- **Note:** the lockdown's internal `channel_overwrites`/`protected_role_overwrites` restore-snapshot maps are never exposed here — they're an internal restoration mechanism, not status information.
+
+### GET `/api/guilds/{gid}/palantir`
+
+**Tier:** spicy
+
+Palantir (surveillance/audit logging) **configuration** plus a cached-message **count**. This is the API's surveillance boundary: palantir's own `palantir_messages.json` caches message content, author ids, attachment URLs, and edit pre-images for its delete/edit-log embeds, and a `palantir_attachments/` directory holds archived attachment bytes — **none of that is ever exposed through this API**. This endpoint reads `palantir_messages.json` solely to take `len()` of the guild's cached-message dict; it never reads or returns a cached entry's content, author, or attachment URL, and never touches `palantir_attachments/` at all.
+
+```json
+{
+  "log_channel": {"id": "…", "name": "audit-log"},
+  "archive_attachments": false,
+  "muted_categories": ["voice"],
+  "cached_messages": 4213
+}
+```
+
+- Sourced from `palantir.json` (config) and `palantir_messages.json` (**count only**, via `len()`).
+- `log_channel` — the configured surveillance-log channel, or `null` if unset.
+- `archive_attachments` — whether attachment archiving to `palantir_attachments/` is on for this guild.
+- `muted_categories` — the guild's `disabled_categories` list (e.g. `"messages"`, `"voice"`, `"roles"`, `"modactions"`, `"invites"`, `"server"`, `"members"`) — categories currently *not* being logged.
+- `cached_messages` — integer count of messages currently held in palantir's on-disk content cache for this guild (used internally for edit/delete diffing); **never** a preview, sample, or list of the cached entries themselves.
+
+### GET `/api/guilds/{gid}/verification`
+
+**Tier:** spicy
+
+Verification role-grant configuration.
+
+```json
+{
+  "granter_role": {"id": "…", "name": "Verifier"},
+  "target_role": {"id": "…", "name": "Member"},
+  "welcome_channel": {"id": "…", "name": "welcome"},
+  "welcome_enabled": true
+}
+```
+
+- Sourced from `verification.json` (not `stats.db`).
+- `granter_role` — the role required to run `.verify`, or `null` if unset.
+- `target_role` — the role `.verify` grants, or `null` if unset.
+- `welcome_channel` — the channel a welcome greeting is posted to on a successful `.verify`, or `null` if unset.
+- `welcome_enabled` — mirrors `cogs/verification.py`'s own semantics: `welcome_channel_id is not None`. `.verification welcome disable` clears `welcome_channel_id` to `null`, which is exactly how the cog itself represents "welcome messages off" (there is no separate enabled/disabled flag).
 
 ---
 
