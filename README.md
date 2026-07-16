@@ -12,7 +12,7 @@ local SQLite database (`stats.db`) for server statistics. Command prefix is `.`.
   [Economy](#economy) ·
   [Stats](#stats) ·
   [Verification](#verification) ·
-  [Watchdog](#watchdog) ·
+  [Cerberus](#cerberus) ·
   [Palantir](#palantir) ·
   [Captions](#captions) ·
   [AI Detect](#ai-detect) ·
@@ -152,11 +152,11 @@ configured role with `verify` — no moderator permission needed. The bot needs
 | `verification granter <role>` | Set the role allowed to use `verify` | Manage Server |
 | `verification target <role>` | Set the role `verify` assigns | Manage Server |
 
-### Watchdog
+### Cerberus
 
 Automated detection of raid/spam behavior, reacting faster than a human mod can (or when
 none are online). Ships **in shadow mode by default**: it detects and alerts, but takes no
-action until a mod runs `.watchdog mode active`. Detects:
+action until a mod runs `.cerberus mode active`. Detects:
 
 - **Pattern A (sleeper raid/scam bursts):** an account posting in 4+ distinct channels within
   20 seconds while mentioning a role above a member-count threshold (auto-detected as
@@ -171,23 +171,23 @@ ban, to bound the damage of a false positive. A failed timeout (e.g. the account
 above the bot's) produces a loud, distinct alert rather than failing silently.
 
 If 2+ accounts independently trip Pattern A, or 3+ post duplicate content, within 60 seconds
-of each other, watchdog also triggers a temporary **lockdown**: `@everyone` loses send
+of each other, cerberus also triggers a temporary **lockdown**: `@everyone` loses send
 permission in every text channel (any configured protected role(s) keep it), auto-lifting
 after 15 minutes unless it's a repeat trigger within the last hour, in which case it stays
-locked until a mod runs `.watchdog unlock`. Every channel's exact pre-lockdown permission
+locked until a mod runs `.cerberus unlock`. Every channel's exact pre-lockdown permission
 state is snapshotted first and restored exactly on lift; lockdown state is persisted, so a
 restart mid-lockdown resumes correctly.
 
-All watchdog commands require `Manage Server`:
+All cerberus commands require `Manage Server`:
 
 | Command | Does |
 |---|---|
-| `watchdog` / `watchdog status` | Show the current configuration and status |
-| `watchdog mode <shadow\|active>` | Switch between alert-only and enforcing |
-| `watchdog setlog #channel` | Set the alert channel |
-| `watchdog exempt add/remove/list <role\|member>` | Exempt roles/members from all checks |
-| `watchdog protectedrole add/remove/list <role>` | Roles that keep send permission during lockdown |
-| `watchdog unlock` | Lift an active lockdown |
+| `cerberus` / `cerberus status` | Show the current configuration and status |
+| `cerberus mode <shadow\|active>` | Switch between alert-only and enforcing |
+| `cerberus setlog #channel` | Set the alert channel |
+| `cerberus exempt add/remove/list <role\|member>` | Exempt roles/members from all checks |
+| `cerberus protectedrole add/remove/list <role>` | Roles that keep send permission during lockdown |
+| `cerberus unlock` | Lift an active lockdown |
 
 Bots, the server owner, and members with Manage Messages or Administrator are always
 exempt, in addition to the configured exempt list.
@@ -399,7 +399,7 @@ manual setup needed:
 | `xp.json`, `messages.json` | XP, monthly message counts |
 | `economy.json` | Bits balances |
 | `verification.json` | Verification role configuration |
-| `watchdog.json` | Watchdog config, including active lockdown state |
+| `cerberus.json` | Cerberus config, including active lockdown state |
 | `palantir.json`, `palantir_messages.json` | Palantir config, message cache |
 | `management.json` | Unloaded extensions, per-guild feature toggles |
 | `reminders.json` | Pending reminders |
@@ -416,7 +416,7 @@ archiving is turned on.
    - Click **Add Bot** and then **Reset Token** to copy your bot's token.
    - Under **Privileged Gateway Intents**, make sure to enable the **Message Content Intent**
      (required for the bot to read messages) and the **Server Members Intent** (required for
-     watchdog's high-value-role detection and palantir's member logging).
+     cerberus's high-value-role detection and palantir's member logging).
 
 2. **Configure your Token:**
    - Copy `.env.example` to `.env`:
@@ -445,7 +445,7 @@ archiving is turned on.
      - `Read Message History`
      - `Kick Members`, `Ban Members`, `Moderate Members`, `Manage Messages`, `Manage Channels`,
        `Manage Roles` (needed for the moderation commands, `lock`/`unlock`, verification's
-       role grants, and watchdog's lockdown mechanism)
+       role grants, and cerberus's lockdown mechanism)
      - `View Audit Log` (needed for palantir to attribute ban/kick/timeout/role-grant actions
        to the responsible moderator by name)
    - Copy the generated URL and open it in your browser to invite the bot to your server.
