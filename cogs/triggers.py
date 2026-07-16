@@ -86,6 +86,10 @@ class Triggers(commands.Cog):
         if "horny" in message.content.lower():
             await message.reply(f"{message.author.mention} ist Horny!")
 
+        # Check if "kurisu stimmt mir zu" is in the message content (case-insensitive)
+        if "kurisu stimmt mir zu" in message.content.lower():
+            await message.reply("Wie kommst du darauf, dass ich dir zustimme?!")
+
 
 async def setup(bot):
     await bot.add_cog(Triggers(bot))

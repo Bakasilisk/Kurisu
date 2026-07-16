@@ -42,6 +42,7 @@ Auto-replies on every message:
 
 - "kurisutina" anywhere in a message (case-insensitive): _Hör auf mich_ **_Kurisutina_** _zu nennen!_
 - "horny" (case-insensitive): "`@user` ist Horny!"
+- "kurisu stimmt mir zu" (case-insensitive): "Wie kommst du darauf, dass ich dir zustimme?!"
 
 | Command | Does |
 |---|---|
