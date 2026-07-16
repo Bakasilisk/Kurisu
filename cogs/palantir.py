@@ -69,7 +69,7 @@ class Palantir(commands.Cog):
             self._sweep_messages.start()
 
     async def cog_load(self):
-        # Fire-and-forget, like watchdog's lockdown rehydration — not tracked or
+        # Fire-and-forget, like cerberus's lockdown rehydration — not tracked or
         # cancelled on unload since it only reads guild state, it doesn't hold
         # anything that needs to be torn down.
         asyncio.ensure_future(self._prime_invite_cache())
@@ -171,7 +171,7 @@ class Palantir(commands.Cog):
         """Shared post helper: resolve the configured channel, guard on
         cog/category state and channel presence, then send — the
         resolve-channel -> guard -> try/except discord.Forbidden shape from
-        watchdog._send_alert."""
+        cerberus._send_alert."""
         if not self._should_log(guild, category):
             return
         guild_conf = self._guild_conf(guild.id)

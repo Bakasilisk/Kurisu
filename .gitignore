@@ -18,8 +18,8 @@ messages.json
 # Economy data
 economy.json
 
-# Watchdog data
-watchdog.json
+# Cerberus data
+cerberus.json
 
 # Verification data
 verification.json

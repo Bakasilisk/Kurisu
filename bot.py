@@ -47,7 +47,7 @@ TOKEN = os.environ.get("DISCORD_TOKEN")
 # Setup bot intents
 intents = discord.Intents.default()
 intents.message_content = True
-# Privileged intent, required for accurate Role.members counts (watchdog's high-value-role
+# Privileged intent, required for accurate Role.members counts (cerberus's high-value-role
 # detection) — must also be enabled under Privileged Gateway Intents in the Developer Portal.
 intents.members = True
 
@@ -60,7 +60,7 @@ INITIAL_EXTENSIONS = [
     "cogs.moderation",
     "cogs.leveling",
     "cogs.economy",
-    "cogs.watchdog",
+    "cogs.cerberus",
     "cogs.verification",
     "cogs.palantir",
     "cogs.stats",

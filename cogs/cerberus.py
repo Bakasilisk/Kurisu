@@ -17,7 +17,7 @@ from .storage import backfill_defaults, data_path, load_json, save_json_atomic
 
 logger = logging.getLogger(__name__)
 
-WATCHDOG_FILE = data_path("watchdog.json")
+CERBERUS_FILE = data_path("cerberus.json")
 
 URL_RE = re.compile(r"https?://\S+")
 
@@ -42,7 +42,7 @@ PATTERN_B_SLOW_WINDOW_SECONDS = 30
 MEMBER_ACTIVITY_MAX_AGE_SECONDS = max(PATTERN_A_WINDOW_SECONDS, PATTERN_B_SLOW_WINDOW_SECONDS)
 PRUNE_INTERVAL_SECONDS = 60
 
-WATCHDOG_TIMEOUT_DURATION_SECONDS = 60 * 60  # 1h; mods can adjust via the existing !timeout/!untimeout
+CERBERUS_TIMEOUT_DURATION_SECONDS = 60 * 60  # 1h; mods can adjust via the existing !timeout/!untimeout
 
 # Guild-wide duplicate-content wave: catches coordinated raids that spread load
 # thin across many accounts, each individually staying under Pattern A/B.
@@ -177,10 +177,10 @@ def _default_guild_config() -> dict:
     }
 
 
-class Watchdog(commands.Cog):
+class Cerberus(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.config = load_json(WATCHDOG_FILE)
+        self.config = load_json(CERBERUS_FILE)
         self._member_activity: dict[tuple[int, int], deque] = {}
         self._high_value_role_cache: dict[int, tuple[float, set[int]]] = {}
         # Last time each member was actioned (monotonic time), so a single ongoing
@@ -212,10 +212,10 @@ class Watchdog(commands.Cog):
         # Deliberately NOT cancelling self._lockdown_tasks here: an in-flight
         # auto-lift only restores channel permissions and doesn't depend on this
         # cog instance's lifecycle, so letting it run to completion is safer than
-        # abandoning an active lockdown on a bare `.reload watchdog`.
+        # abandoning an active lockdown on a bare `.reload cerberus`.
 
     def _save_config(self):
-        save_json_atomic(WATCHDOG_FILE, self.config)
+        save_json_atomic(CERBERUS_FILE, self.config)
 
     def _guild_conf(self, guild_id: int) -> dict:
         # Backfill any keys missing from a config persisted by an earlier schema
@@ -250,7 +250,7 @@ class Watchdog(commands.Cog):
     async def on_message(self, message: discord.Message) -> None:
         if message.guild is None:
             return
-        if not cog_enabled(self.bot, message.guild.id, "watchdog"):
+        if not cog_enabled(self.bot, message.guild.id, "cerberus"):
             return
         if message.webhook_id is not None:
             await self._handle_webhook_message(message)
@@ -332,7 +332,7 @@ class Watchdog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
-        if not cog_enabled(self.bot, member.guild.id, "watchdog"):
+        if not cog_enabled(self.bot, member.guild.id, "cerberus"):
             return
         key = (member.guild.id, member.id)
         self._member_activity.pop(key, None)
@@ -411,7 +411,7 @@ class Watchdog(commands.Cog):
                 continue
             expires_at = lockdown.get("expires_at")
             if expires_at is None:
-                continue  # stay-locked lockdown: holds until a manual `.watchdog unlock`
+                continue  # stay-locked lockdown: holds until a manual `.cerberus unlock`
             remaining = expires_at - now_epoch
             if remaining <= 0:
                 await self._lift_lockdown(guild, manual=False)
@@ -454,7 +454,7 @@ class Watchdog(commands.Cog):
                     overwrite.send_messages = False
                     await channel.set_permissions(
                         guild.default_role, overwrite=overwrite,
-                        reason=f"Watchdog lockdown: {reason}",
+                        reason=f"Cerberus lockdown: {reason}",
                     )
                     for role in protected_roles:
                         protected_role_overwrites[str(role.id)][str(channel.id)] = (
@@ -464,7 +464,7 @@ class Watchdog(commands.Cog):
                         allow_overwrite.send_messages = True
                         await channel.set_permissions(
                             role, overwrite=allow_overwrite,
-                            reason=f"Watchdog lockdown: {reason}",
+                            reason=f"Cerberus lockdown: {reason}",
                         )
 
             # return_exceptions=True is essential here: with the default False,
@@ -490,7 +490,7 @@ class Watchdog(commands.Cog):
             ]
             if failures:
                 logger.warning(
-                    "Watchdog: failed to lock %d/%d channel(s) in guild %s: %s",
+                    "Cerberus: failed to lock %d/%d channel(s) in guild %s: %s",
                     len(failures), len(channels), guild.id,
                     ", ".join(f"{c.id} ({e})" for c, e in failures),
                 )
@@ -538,7 +538,7 @@ class Watchdog(commands.Cog):
                 channel = guild.get_channel(int(channel_id_str))
                 if channel is not None:
                     await restore_overwrite(
-                        channel, guild.default_role, snapshot, reason="Watchdog: lockdown lifted"
+                        channel, guild.default_role, snapshot, reason="Cerberus: lockdown lifted"
                     )
             for role_id_str, per_channel in lockdown["protected_role_overwrites"].items():
                 role = guild.get_role(int(role_id_str))
@@ -548,7 +548,7 @@ class Watchdog(commands.Cog):
                     channel = guild.get_channel(int(channel_id_str))
                     if channel is not None:
                         await restore_overwrite(
-                            channel, role, snapshot, reason="Watchdog: lockdown lifted"
+                            channel, role, snapshot, reason="Cerberus: lockdown lifted"
                         )
 
             lockdown["active"] = False
@@ -585,11 +585,11 @@ class Watchdog(commands.Cog):
         elif stay_locked:
             description += (
                 "\n\n⚠️ This is a repeat trigger within the last hour — staying locked "
-                "until manually lifted with `.watchdog unlock`."
+                "until manually lifted with `.cerberus unlock`."
             )
         else:
             minutes = LOCKDOWN_MAX_DURATION_SECONDS // 60
-            description += f"\n\nAuto-lifts in {minutes} minutes, or use `.watchdog unlock`."
+            description += f"\n\nAuto-lifts in {minutes} minutes, or use `.cerberus unlock`."
         if failed_count:
             description += (
                 f"\n\n⚠️ Failed to lock {failed_count} channel(s) — check the bot's "
@@ -598,9 +598,9 @@ class Watchdog(commands.Cog):
 
         embed = discord.Embed(
             title=(
-                "🔒 Watchdog Lockdown [SHADOW MODE — no action taken]"
+                "🔒 Cerberus Lockdown [SHADOW MODE — no action taken]"
                 if shadow
-                else "🔒 Watchdog Lockdown Started"
+                else "🔒 Cerberus Lockdown Started"
             ),
             description=description,
             color=discord.Color.orange() if shadow else discord.Color.dark_red(),
@@ -617,7 +617,7 @@ class Watchdog(commands.Cog):
             else "Auto-lifted after the lockdown duration elapsed."
         )
         embed = discord.Embed(
-            title="🔓 Watchdog Lockdown Lifted", description=description,
+            title="🔓 Cerberus Lockdown Lifted", description=description,
             color=discord.Color.green(), timestamp=discord.utils.utcnow(),
         )
         await self._send_to_log_channel(guild, guild_conf, embed)
@@ -633,8 +633,8 @@ class Watchdog(commands.Cog):
         if not shadow:
             try:
                 await member.timeout(
-                    timedelta(seconds=WATCHDOG_TIMEOUT_DURATION_SECONDS),
-                    reason=f"Watchdog: {reason}",
+                    timedelta(seconds=CERBERUS_TIMEOUT_DURATION_SECONDS),
+                    reason=f"Cerberus: {reason}",
                 )
             except discord.HTTPException as e:
                 timeout_ok, timeout_error = False, e
@@ -657,13 +657,13 @@ class Watchdog(commands.Cog):
         guild_conf = self._guild_conf(guild.id)
 
         if not action.timeout_ok:
-            title = "⚠️ WATCHDOG: TIMEOUT FAILED — manual action required"
+            title = "⚠️ CERBERUS: TIMEOUT FAILED — manual action required"
             color = discord.Color.red()
         elif shadow:
-            title = "🐕 Watchdog Detection [SHADOW MODE — no action taken]"
+            title = "🐕 Cerberus Detection [SHADOW MODE — no action taken]"
             color = discord.Color.orange()
         else:
-            title = "🐕 Watchdog Action Taken"
+            title = "🐕 Cerberus Action Taken"
             color = discord.Color.orange()
 
         channels_touched = ", ".join(
@@ -718,7 +718,7 @@ class Watchdog(commands.Cog):
         protected_roles = [r for r in protected_roles if r is not None]
         lockdown = guild_conf["lockdown"]
 
-        embed = discord.Embed(title="🐕 Watchdog Status", color=discord.Color.blue())
+        embed = discord.Embed(title="🐕 Cerberus Status", color=discord.Color.blue())
         embed.add_field(name="Mode", value=guild_conf["mode"])
         embed.add_field(
             name="Log channel", value=log_channel.mention if log_channel else "Not set"
@@ -757,7 +757,7 @@ class Watchdog(commands.Cog):
         members = [ctx.guild.get_member(uid) for uid in guild_conf["exempt_user_ids"]]
         members = [m for m in members if m is not None]
 
-        embed = discord.Embed(title="🐕 Watchdog Exemptions", color=discord.Color.blue())
+        embed = discord.Embed(title="🐕 Cerberus Exemptions", color=discord.Color.blue())
         embed.add_field(
             name="Roles", value=", ".join(r.mention for r in roles) if roles else "None",
             inline=False,
@@ -777,24 +777,24 @@ class Watchdog(commands.Cog):
     @commands.group(invoke_without_command=True)
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog(self, ctx):
-        """Show the current watchdog configuration and status."""
+    async def cerberus(self, ctx):
+        """Show the current cerberus configuration and status."""
         guild_conf = self._guild_conf(ctx.guild.id)
         await ctx.reply(embed=await self._status_embed(ctx, guild_conf))
 
-    @watchdog.command(name="status")
+    @cerberus.command(name="status")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog_status(self, ctx):
-        """Show the current watchdog configuration and status."""
+    async def cerberus_status(self, ctx):
+        """Show the current cerberus configuration and status."""
         guild_conf = self._guild_conf(ctx.guild.id)
         await ctx.reply(embed=await self._status_embed(ctx, guild_conf))
 
-    @watchdog.command(name="mode")
+    @cerberus.command(name="mode")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog_mode(self, ctx, mode: str):
-        """Set watchdog's mode: shadow (detect + alert only) or active (also take action)."""
+    async def cerberus_mode(self, ctx, mode: str):
+        """Set cerberus's mode: shadow (detect + alert only) or active (also take action)."""
         mode = mode.lower()
         if mode not in ("shadow", "active"):
             await ctx.reply("Mode must be `shadow` or `active`.")
@@ -802,33 +802,33 @@ class Watchdog(commands.Cog):
         guild_conf = self._guild_conf(ctx.guild.id)
         guild_conf["mode"] = mode
         self._save_config()
-        await ctx.reply(f"🐕 Watchdog mode set to **{mode}**.")
+        await ctx.reply(f"🐕 Cerberus mode set to **{mode}**.")
 
-    @watchdog.command(name="setlog")
+    @cerberus.command(name="setlog")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog_setlog(self, ctx, channel: discord.TextChannel):
-        """Set the channel watchdog alerts are posted to."""
+    async def cerberus_setlog(self, ctx, channel: discord.TextChannel):
+        """Set the channel cerberus alerts are posted to."""
         guild_conf = self._guild_conf(ctx.guild.id)
         guild_conf["log_channel_id"] = channel.id
         self._save_config()
-        await ctx.reply(f"🐕 Watchdog alerts will be sent to {channel.mention}.")
+        await ctx.reply(f"🐕 Cerberus alerts will be sent to {channel.mention}.")
 
-    @watchdog.group(name="exempt", invoke_without_command=True)
+    @cerberus.group(name="exempt", invoke_without_command=True)
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog_exempt(self, ctx):
-        """Show watchdog's current exemption list."""
+    async def cerberus_exempt(self, ctx):
+        """Show cerberus's current exemption list."""
         guild_conf = self._guild_conf(ctx.guild.id)
         await ctx.reply(embed=await self._exemptions_embed(ctx, guild_conf))
 
-    @watchdog_exempt.command(name="add")
+    @cerberus_exempt.command(name="add")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog_exempt_add(
+    async def cerberus_exempt_add(
         self, ctx, target: typing.Union[discord.Role, discord.Member]
     ):
-        """Exempt a role or member from all watchdog checks.
+        """Exempt a role or member from all cerberus checks.
 
         If a role and a member share the same name, prefer a mention or ID —
         the role is tried first and wins any name collision."""
@@ -840,15 +840,15 @@ class Watchdog(commands.Cog):
         if target.id not in ids:
             ids.append(target.id)
             self._save_config()
-        await ctx.reply(f"✅ {kind} {target.mention} is now exempt from watchdog checks.")
+        await ctx.reply(f"✅ {kind} {target.mention} is now exempt from cerberus checks.")
 
-    @watchdog_exempt.command(name="remove")
+    @cerberus_exempt.command(name="remove")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog_exempt_remove(
+    async def cerberus_exempt_remove(
         self, ctx, target: typing.Union[discord.Role, discord.Member]
     ):
-        """Remove a role or member's watchdog exemption.
+        """Remove a role or member's cerberus exemption.
 
         If a role and a member share the same name, prefer a mention or ID —
         the role is tried first and wins any name collision."""
@@ -865,38 +865,38 @@ class Watchdog(commands.Cog):
         else:
             await ctx.reply(f"{target.mention} wasn't exempt.")
 
-    @watchdog_exempt.command(name="list")
+    @cerberus_exempt.command(name="list")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog_exempt_list(self, ctx):
-        """List watchdog's current exemptions."""
+    async def cerberus_exempt_list(self, ctx):
+        """List cerberus's current exemptions."""
         guild_conf = self._guild_conf(ctx.guild.id)
         await ctx.reply(embed=await self._exemptions_embed(ctx, guild_conf))
 
-    @watchdog.group(name="protectedrole", invoke_without_command=True)
+    @cerberus.group(name="protectedrole", invoke_without_command=True)
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog_protectedrole(self, ctx):
-        """Show the roles exempt from watchdog lockdowns."""
+    async def cerberus_protectedrole(self, ctx):
+        """Show the roles exempt from cerberus lockdowns."""
         guild_conf = self._guild_conf(ctx.guild.id)
         await ctx.reply(await self._protected_roles_reply(ctx, guild_conf))
 
-    @watchdog_protectedrole.command(name="add")
+    @cerberus_protectedrole.command(name="add")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog_protectedrole_add(self, ctx, role: discord.Role):
-        """Exempt a role from watchdog lockdowns (it keeps send permission)."""
+    async def cerberus_protectedrole_add(self, ctx, role: discord.Role):
+        """Exempt a role from cerberus lockdowns (it keeps send permission)."""
         guild_conf = self._guild_conf(ctx.guild.id)
         if role.id not in guild_conf["protected_role_ids"]:
             guild_conf["protected_role_ids"].append(role.id)
             self._save_config()
-        await ctx.reply(f"🛡️ {role.mention} is now protected from watchdog lockdowns.")
+        await ctx.reply(f"🛡️ {role.mention} is now protected from cerberus lockdowns.")
 
-    @watchdog_protectedrole.command(name="remove")
+    @cerberus_protectedrole.command(name="remove")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog_protectedrole_remove(self, ctx, role: discord.Role):
-        """Remove a role's protection from watchdog lockdowns."""
+    async def cerberus_protectedrole_remove(self, ctx, role: discord.Role):
+        """Remove a role's protection from cerberus lockdowns."""
         guild_conf = self._guild_conf(ctx.guild.id)
         if role.id in guild_conf["protected_role_ids"]:
             guild_conf["protected_role_ids"].remove(role.id)
@@ -905,22 +905,22 @@ class Watchdog(commands.Cog):
         else:
             await ctx.reply(f"{role.mention} wasn't protected.")
 
-    @watchdog_protectedrole.command(name="list")
+    @cerberus_protectedrole.command(name="list")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog_protectedrole_list(self, ctx):
-        """List the roles exempt from watchdog lockdowns."""
+    async def cerberus_protectedrole_list(self, ctx):
+        """List the roles exempt from cerberus lockdowns."""
         guild_conf = self._guild_conf(ctx.guild.id)
         await ctx.reply(await self._protected_roles_reply(ctx, guild_conf))
 
-    @watchdog.command(name="unlock")
+    @cerberus.command(name="unlock")
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
-    async def watchdog_unlock(self, ctx):
-        """Manually end an active watchdog lockdown."""
+    async def cerberus_unlock(self, ctx):
+        """Manually end an active cerberus lockdown."""
         guild_conf = self._guild_conf(ctx.guild.id)
         if not guild_conf["lockdown"]["active"]:
-            await ctx.reply("There is no active watchdog lockdown.")
+            await ctx.reply("There is no active cerberus lockdown.")
             return
         task = self._lockdown_tasks.pop(ctx.guild.id, None)
         if task is not None:
@@ -930,4 +930,4 @@ class Watchdog(commands.Cog):
 
 
 async def setup(bot):
-    await bot.add_cog(Watchdog(bot))
+    await bot.add_cog(Cerberus(bot))
