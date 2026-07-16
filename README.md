@@ -144,7 +144,9 @@ databases migrate automatically on the first launch after an update, but `stats 
 
 Role-gated verification: members holding the configured "granter" role can hand out the
 configured role with `verify` — no moderator permission needed. The bot needs
-`Manage Roles`, with its top role above the granted role.
+`Manage Roles`, with its top role above the granted role. On a successful `verify`, the bot
+also posts a German welcome greeting pinging the member in the configured welcome channel
+(`verification welcome set #channel` / `verification welcome disable`), if one is set.
 
 | Command | Does | Requires |
 |---|---|---|
@@ -152,6 +154,9 @@ configured role with `verify` — no moderator permission needed. The bot needs
 | `verification` | Show the current configuration | Manage Server |
 | `verification granter <role>` | Set the role allowed to use `verify` | Manage Server |
 | `verification target <role>` | Set the role `verify` assigns | Manage Server |
+| `verification welcome` | Show the welcome channel | Manage Server |
+| `verification welcome set <channel>` | Set the channel newly-verified members are welcomed in | Manage Server |
+| `verification welcome disable` | Stop welcoming newly-verified members | Manage Server |
 
 ### Cerberus
 
