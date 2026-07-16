@@ -390,6 +390,7 @@ frontend on the same host calls it over localhost.
 | `GET /api/guilds/{id}/quietest` | Least-active members, last 30 days (optional `limit=N`) |
 | `GET /api/guilds/{id}/leveling` | XP leaderboard from `xp.json` (optional `limit=N`) |
 | `GET /api/guilds/{id}/economy` | Bits leaderboard from `economy.json` (optional `limit=N`) |
+| `GET /api/guilds/{id}/warnings` | Moderation warnings from `warnings.json`, spicy/mod-tier (optional `limit=N`) |
 
 ### Logging & data files
 

@@ -81,6 +81,7 @@ class WebAPI(commands.Cog):
         r.add_get("/api/guilds/{gid}/quietest", self._handle_quietest)
         r.add_get("/api/guilds/{gid}/leveling", self._handle_leveling)
         r.add_get("/api/guilds/{gid}/economy", self._handle_economy)
+        r.add_get("/api/guilds/{gid}/warnings", self._handle_warnings)
 
     # --- Lifecycle ------------------------------------------------------
 
@@ -463,6 +464,19 @@ class WebAPI(commands.Cog):
         pct_of_server = (total_count / server_total * 100) if server_total else 0.0
         words_per_msg = (total_words / total_count) if total_count else 0.0
 
+        # Harmless (member-readable) enrichment only - leveling and economy.
+        # Warnings are spicy/mod-tier and deliberately excluded here; they
+        # live solely on the /warnings endpoint.
+        guild_xp = self._cog_json("xp.json").get(str(guild.id), {})
+        xp = guild_xp.get(str(uid), 0)
+        lvl_rank = rank_of(((int(k), v) for k, v in guild_xp.items()), key=lambda kv: kv[1], target_id=uid)
+
+        guild_bank = self._cog_json("economy.json").get(str(guild.id), {})
+        bits = guild_bank.get(str(uid), {}).get("balance", 0)
+        econ_rank = rank_of(
+            ((int(k), e.get("balance", 0)) for k, e in guild_bank.items()), key=lambda kv: kv[1], target_id=uid
+        )
+
         return web.json_response({
             "user": self._user_json(guild, uid),
             "total_messages": total_count,
@@ -477,6 +491,8 @@ class WebAPI(commands.Cog):
             "reactions_given": given,
             "reactions_received": received,
             "top_channels": [{"channel": self._channel_json(guild, cid), "count": c} for cid, c in channel_rows],
+            "leveling": {"xp": xp, "level": level_from_xp(xp), "rank": lvl_rank},
+            "economy": {"bits": bits, "rank": econ_rank},
         })
 
     async def _handle_quietest(self, request: web.Request):
@@ -531,6 +547,36 @@ class WebAPI(commands.Cog):
         if limit is not None:
             rows = rows[:limit]
         entries = [{"user": self._user_json(guild, uid), "bits": bal} for uid, bal in rows]
+        return web.json_response({"entries": entries})
+
+    async def _handle_warnings(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        limit = self._limit_param(request)
+        guild_warns = self._cog_json("warnings.json").get(str(guild.id), {})
+        rows = sorted(
+            ((int(uid), warn_list) for uid, warn_list in guild_warns.items()),
+            key=lambda kv: len(kv[1]),
+            reverse=True,
+        )
+        if limit is not None:
+            rows = rows[:limit]
+        entries = [
+            {
+                "user": self._user_json(guild, uid),
+                "count": len(warn_list),
+                "warnings": [
+                    {
+                        "reason": w.get("reason"),
+                        "moderator": self._user_json(guild, w["moderator_id"]) if w.get("moderator_id") is not None else None,
+                        "timestamp": w.get("timestamp"),
+                    }
+                    for w in warn_list
+                ],
+            }
+            for uid, warn_list in rows
+        ]
         return web.json_response({"entries": entries})
 
 

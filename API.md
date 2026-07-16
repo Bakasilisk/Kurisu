@@ -200,6 +200,8 @@ Query: `period` (default `month`).
 
 ### GET `/api/guilds/{gid}/members/{uid}`
 
+**Tier:** harmless
+
 Per-member statistics (all-time).
 
 An unknown or departed member is **not** a 404: statistics are looked up regardless, so a user with no recorded data returns zeros with `user.name = "Unknown"`. Treat `total_messages == 0` together with `server_rank == null` as "no data".
@@ -218,7 +220,9 @@ An unknown or departed member is **not** a 404: statistics are looked up regardl
   "voice_seconds": 88421,
   "reactions_given": 1204,
   "reactions_received": 990,
-  "top_channels": [{"channel": {…}, "count": 5120}, …]
+  "top_channels": [{"channel": {…}, "count": 5120}, …],
+  "leveling": {"xp": 4820, "level": 12, "rank": 3},
+  "economy": {"bits": 3150, "rank": 7}
 }
 ```
 
@@ -229,6 +233,9 @@ An unknown or departed member is **not** a 404: statistics are looked up regardl
 - `words_per_msg` — float; `0.0` when the member has no messages.
 - `busiest_hour` — UTC hour (0–23) with the most messages, or `null` if the member has none.
 - `top_channels` — every channel the member has posted in, sorted by count descending.
+- `leveling` — `xp` (cumulative, from `xp.json`, defaults to `0`), `level` (derived via `level_from_xp`), and `rank` (1-based rank by `xp` among users with an `xp.json` entry, or `null` if the member has none).
+- `economy` — `bits` (balance, from `economy.json`, defaults to `0`) and `rank` (1-based rank by balance, or `null` if the member has no entry).
+- **Note:** warnings are deliberately **not** included here. Warnings are spicy/mod-tier data; they live solely on `GET /api/guilds/{gid}/warnings` so this endpoint stays safely member-readable.
 
 ### GET `/api/guilds/{gid}/quietest`
 
@@ -275,6 +282,38 @@ Query: `limit`.
 - Sourced from `economy.json` (not `stats.db`).
 - `entries` is sorted by `bits` (balance) descending, covering every user with an entry in `economy.json` (up to `limit`). No `period` parameter.
 - Economy balances save on every change, so this data is fresh (no flush-interval lag, unlike `/leveling`).
+
+### GET `/api/guilds/{gid}/warnings`
+
+**Tier:** spicy
+
+Moderation warnings from the `warnings` cog, one entry per warned user.
+
+Query: `limit`.
+
+```json
+{
+  "entries": [
+    {
+      "user": {"id": "…", "name": "…", "avatar": "…"},
+      "count": 2,
+      "warnings": [
+        {
+          "reason": "spamming in #general",
+          "moderator": {"id": "…", "name": "ModName", "avatar": "…"},
+          "timestamp": "2026-06-01T14:22:00+00:00"
+        },
+        {"reason": "…", "moderator": {…}, "timestamp": "…"}
+      ]
+    }
+  ]
+}
+```
+
+- Sourced from `warnings.json` (not `stats.db`).
+- `entries` is sorted by `count` (number of warnings) descending, covering every user with at least one warning (up to `limit`). No `period` parameter.
+- `moderator` is resolved from the bot's live member cache the same way as `user`. If the moderator has since left the guild (or the cache is cold), it comes back as `{"id": "…", "name": "Unknown", "avatar": null}` rather than a literal `null`. `moderator` is only a literal `null` in the rare case the stored warning itself has no `moderator_id`.
+- This endpoint is **spicy**: unlike `/members/{uid}`, its data is mod-tier and must not be exposed to ordinary members by a consumer.
 
 ---
 
