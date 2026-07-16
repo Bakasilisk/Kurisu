@@ -182,7 +182,10 @@ class Verification(commands.Cog):
             )
             return
         if target_role in member.roles:
-            await ctx.reply(f"{member.mention} already has {target_role.mention}.")
+            await ctx.reply(
+                f"{member.mention} already has {target_role.mention}.",
+                allowed_mentions=discord.AllowedMentions(roles=False),
+            )
             return
         if not bot_outranks(ctx.guild, target_role):
             await ctx.reply("I can't assign a role that's equal to or higher than my own top role.")
