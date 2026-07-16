@@ -269,7 +269,9 @@ An unknown or departed member is **not** a 404: statistics are looked up regardl
 
 ### GET `/api/guilds/{gid}/quietest`
 
-Least-active members over a fixed 30-day window (no `period` parameter).
+**Tier:** spicy
+
+Least-active members over a fixed 30-day window (no `period` parameter). Tiered **spicy** to match the bot itself: the `stats` cog gates `.stats quietest` behind Manage Server (surfacing a "who's least active" call-out list is a moderation-adjacent view), so the API keeps it mod-tier for consistency.
 
 Query: `limit`.
 
