@@ -5,10 +5,12 @@ from .management import bot_outranks, cog_enabled, common_error_reply
 from .storage import backfill_defaults, data_path, load_json, save_json_atomic
 
 VERIFICATION_FILE = data_path("verification.json")
+WELCOME_TEXT = "Herzlich Willkommen auf dem Magic Society Server, {user}!"
+WELCOME_EMOJI_IDS = (859152939750391818, 858417437523705896)
 
 
 def _default_guild_config() -> dict:
-    return {"granter_role_id": None, "target_role_id": None}
+    return {"granter_role_id": None, "target_role_id": None, "welcome_channel_id": None}
 
 
 class Verification(commands.Cog):
@@ -23,6 +25,30 @@ class Verification(commands.Cog):
         entry = self.config.setdefault(str(guild_id), {})
         return backfill_defaults(entry, _default_guild_config())
 
+    async def _send_welcome(self, guild, member):
+        channel_id = self.config.get(str(guild.id), {}).get("welcome_channel_id")
+        if not channel_id:
+            return
+        channel = guild.get_channel(channel_id)
+        if channel is None:
+            return
+        emojis = " ".join(
+            str(e) for e in (self.bot.get_emoji(i) for i in WELCOME_EMOJI_IDS)
+            if e is not None
+        )
+        content = WELCOME_TEXT.format(user=member.mention)
+        if emojis:
+            content = f"{content} {emojis}"
+        try:
+            await channel.send(
+                content,
+                allowed_mentions=discord.AllowedMentions(
+                    users=True, roles=False, everyone=False
+                ),
+            )
+        except discord.Forbidden:
+            pass
+
     async def cog_check(self, ctx):
         return ctx.guild is None or cog_enabled(self.bot, ctx.guild.id, "verification")
 
@@ -31,6 +57,8 @@ class Verification(commands.Cog):
             await ctx.reply("I couldn't find that role.")
         elif isinstance(error, commands.MemberNotFound):
             await ctx.reply("I couldn't find that member.")
+        elif isinstance(error, commands.ChannelNotFound):
+            await ctx.reply("I couldn't find that channel.")
         elif await common_error_reply(ctx, error):
             return
         else:
@@ -41,7 +69,7 @@ class Verification(commands.Cog):
     @commands.guild_only()
     async def verification(self, ctx):
         """Show the current verification configuration."""
-        guild_conf = self.config.get(str(ctx.guild.id), _default_guild_config())
+        guild_conf = self._guild_conf(ctx.guild.id)
         granter = (
             ctx.guild.get_role(guild_conf["granter_role_id"])
             if guild_conf["granter_role_id"]
@@ -52,9 +80,15 @@ class Verification(commands.Cog):
             if guild_conf["target_role_id"]
             else None
         )
+        channel = (
+            ctx.guild.get_channel(guild_conf["welcome_channel_id"])
+            if guild_conf["welcome_channel_id"]
+            else None
+        )
         await ctx.reply(
             f"Granter role: {granter.mention if granter else 'Not set'}\n"
             f"Role granted: {target.mention if target else 'Not set'}\n"
+            f"Welcome channel: {channel.mention if channel else 'Not set'}\n"
             f"Members with the granter role can run `.verify @member`.",
             allowed_mentions=discord.AllowedMentions(roles=False),
         )
@@ -83,6 +117,45 @@ class Verification(commands.Cog):
         await ctx.reply(
             f"✅ `.verify` now grants {role.mention}.",
             allowed_mentions=discord.AllowedMentions(roles=False),
+        )
+
+    @verification.group(name="welcome", invoke_without_command=True)
+    @commands.has_permissions(manage_guild=True)
+    @commands.guild_only()
+    async def verification_welcome(self, ctx):
+        """Show the channel welcomes are posted to."""
+        guild_conf = self._guild_conf(ctx.guild.id)
+        channel = (
+            ctx.guild.get_channel(guild_conf["welcome_channel_id"])
+            if guild_conf["welcome_channel_id"] else None
+        )
+        await ctx.reply(
+            f"Welcome messages are sent to {channel.mention}." if channel
+            else "No welcome channel is set. Use `.verification welcome set #channel`."
+        )
+
+    @verification_welcome.command(name="set")
+    @commands.has_permissions(manage_guild=True)
+    @commands.guild_only()
+    async def verification_welcome_set(self, ctx, channel: discord.TextChannel):
+        """Set the channel newly-verified members are welcomed in."""
+        guild_conf = self._guild_conf(ctx.guild.id)
+        guild_conf["welcome_channel_id"] = channel.id
+        self._save_config()
+        await ctx.reply(f"✅ Welcome messages will be sent to {channel.mention}.")
+
+    @verification_welcome.command(name="disable")
+    @commands.has_permissions(manage_guild=True)
+    @commands.guild_only()
+    async def verification_welcome_disable(self, ctx):
+        """Stop welcoming newly-verified members."""
+        guild_conf = self._guild_conf(ctx.guild.id)
+        had_one = guild_conf["welcome_channel_id"] is not None
+        guild_conf["welcome_channel_id"] = None
+        self._save_config()
+        await ctx.reply(
+            "✅ Welcome messages disabled." if had_one
+            else "Welcome messages were not enabled."
         )
 
     @commands.command()
@@ -116,6 +189,7 @@ class Verification(commands.Cog):
             return
 
         await member.add_roles(target_role, reason=f"Granted by {ctx.author} via .verify")
+        await self._send_welcome(ctx.guild, member)
         await ctx.reply(
             f"✅ Gave {member.mention} the {target_role.mention} role.",
             allowed_mentions=discord.AllowedMentions(roles=False),
