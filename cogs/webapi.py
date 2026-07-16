@@ -166,6 +166,16 @@ class WebAPI(commands.Cog):
         period = request.query.get("period", default)
         return period if period in ("week", "month", "year", "all") else default
 
+    @staticmethod
+    def _limit_param(request: web.Request) -> int | None:
+        """Optional positive `limit` query param; None (= full list) when
+        absent or invalid, mirroring _period_param's silent fallback."""
+        try:
+            limit = int(request.query.get("limit", ""))
+        except ValueError:
+            return None
+        return limit if limit > 0 else None
+
     # --- Endpoints -----------------------------------------------------------
 
     async def _handle_meta(self, request: web.Request):
@@ -232,10 +242,6 @@ class WebAPI(commands.Cog):
         voice_total = await self._fetch(
             "SELECT COALESCE(SUM(seconds),0) FROM voice WHERE guild_id = ?", (guild.id,)
         )
-        top_rows = await self._fetch(
-            "SELECT user_id, SUM(count) as c FROM messages WHERE guild_id = ? GROUP BY user_id ORDER BY c DESC",
-            (guild.id,),
-        )
 
         return web.json_response({
             "guild": self._guild_json(guild),
@@ -247,7 +253,6 @@ class WebAPI(commands.Cog):
             "reactions": reaction_total[0][0],
             "voice_seconds": voice_total[0][0],
             "trend": {"recent": recent_count, "prior": prior_count, "pct": pct, "text": text},
-            "top_posters": [{"user": self._user_json(guild, uid), "count": c} for uid, c in top_rows],
         })
 
     async def _handle_top(self, request: web.Request):
@@ -256,12 +261,16 @@ class WebAPI(commands.Cog):
             return err
         period = self._period_param(request, "all")
         start_day = _period_start(period)
+        limit = self._limit_param(request)
         sql = "SELECT user_id, SUM(count) as c FROM messages WHERE guild_id = ?"
         params = [guild.id]
         if start_day:
             sql += " AND day >= ?"
             params.append(start_day)
         sql += " GROUP BY user_id ORDER BY c DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
         rows = await self._fetch(sql, tuple(params))
         entries = [{"user": self._user_json(guild, uid), "count": c} for uid, c in rows]
         return web.json_response({"period": period, "entries": entries})
@@ -272,12 +281,16 @@ class WebAPI(commands.Cog):
             return err
         period = self._period_param(request, "all")
         start_day = _period_start(period)
+        limit = self._limit_param(request)
         sql = "SELECT channel_id, SUM(count) as c FROM messages WHERE guild_id = ?"
         params = [guild.id]
         if start_day:
             sql += " AND day >= ?"
             params.append(start_day)
         sql += " GROUP BY channel_id ORDER BY c DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
         rows = await self._fetch(sql, tuple(params))
         entries = [{"channel": self._channel_json(guild, cid), "count": c} for cid, c in rows]
         return web.json_response({"period": period, "entries": entries})
@@ -328,12 +341,16 @@ class WebAPI(commands.Cog):
             return err
         period = self._period_param(request, "all")
         start_day = _period_start(period)
+        limit = self._limit_param(request)
         sql = "SELECT user_id, SUM(seconds) as s FROM voice WHERE guild_id = ?"
         params = [guild.id]
         if start_day:
             sql += " AND day >= ?"
             params.append(start_day)
         sql += " GROUP BY user_id ORDER BY s DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
         rows = await self._fetch(sql, tuple(params))
         entries = [{"user": self._user_json(guild, uid), "seconds": s} for uid, s in rows]
         return web.json_response({"period": period, "entries": entries})
@@ -447,6 +464,9 @@ class WebAPI(commands.Cog):
         counts = {uid: c for uid, c in rows}
         members = [m for m in guild.members if not m.bot]
         quietest = sorted(members, key=lambda m: counts.get(m.id, 0))
+        limit = self._limit_param(request)
+        if limit is not None:
+            quietest = quietest[:limit]
         entries = [
             {
                 "user": {"id": str(m.id), "name": m.display_name, "avatar": str(m.display_avatar.url)},

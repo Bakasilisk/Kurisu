@@ -364,7 +364,8 @@ unloaded across restarts, and `management` itself can't be unloaded.
 
 A read-only HTTP/JSON API (`cogs/webapi.py`) for a separate web frontend — mirrors the `stats`
 cog's queries as JSON instead of Discord embeds, plus name/avatar resolution from the bot's live
-cache. Infra, not a per-guild toggleable cog (like management/help).
+cache. Infra, not a per-guild toggleable cog (like management/help). Full request/response
+reference in [API.md](API.md).
 
 Requires `WEBAPI_KEY` in `.env` (comma-separated to accept multiple keys during rotation) — every
 request needs a matching `X-API-Key` header, or the server doesn't start at all. Binds to
@@ -375,12 +376,12 @@ frontend on the same host calls it over localhost.
 |---|---|
 | `GET /api/meta` | Bot owner id, guild count |
 | `GET /api/guilds` | Tracked guilds (id/name/icon) |
-| `GET /api/guilds/{id}/overview` | Server totals, trend, top posters |
-| `GET /api/guilds/{id}/top` \| `/channels` \| `/voice` | Full ranked lists (`period=week/month/year/all`) |
+| `GET /api/guilds/{id}/overview` | Server totals, trend |
+| `GET /api/guilds/{id}/top` \| `/channels` \| `/voice` | Ranked lists (`period=week/month/year/all`, optional `limit=N`) |
 | `GET /api/guilds/{id}/activity` | Hour×weekday grid |
 | `GET /api/guilds/{id}/growth` | Joins/leaves/net |
 | `GET /api/guilds/{id}/members/{uid}` | One member's profile |
-| `GET /api/guilds/{id}/quietest` | Least-active members (last 30 days) |
+| `GET /api/guilds/{id}/quietest` | Least-active members, last 30 days (optional `limit=N`) |
 
 ### Logging & data files
 
