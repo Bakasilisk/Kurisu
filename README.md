@@ -388,6 +388,8 @@ frontend on the same host calls it over localhost.
 | `GET /api/guilds/{id}/growth` | Joins/leaves/net |
 | `GET /api/guilds/{id}/members/{uid}` | One member's profile |
 | `GET /api/guilds/{id}/quietest` | Least-active members, last 30 days (optional `limit=N`) |
+| `GET /api/guilds/{id}/leveling` | XP leaderboard from `xp.json` (optional `limit=N`) |
+| `GET /api/guilds/{id}/economy` | Bits leaderboard from `economy.json` (optional `limit=N`) |
 
 ### Logging & data files
 

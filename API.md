@@ -243,6 +243,39 @@ Query: `limit`.
 - Covers every **non-bot member currently in the guild's cache**, including members with zero messages — unlike the leaderboards, absence of data is the point here.
 - Sorted by `count` ascending (quietest first), truncated to `limit` after sorting. Without a `limit` the full member list is returned — for a large guild, always pass one.
 
+### GET `/api/guilds/{gid}/leveling`
+
+**Tier:** harmless
+
+XP leaderboard from the `leveling` cog.
+
+Query: `limit`.
+
+```json
+{"entries": [{"user": {…}, "xp": 4820, "level": 12}, …]}
+```
+
+- Sourced from `xp.json` (not `stats.db`) — this is the leveling cog's own cumulative XP counter, independent of message-count stats.
+- `entries` is sorted by `xp` descending, covering every user with an entry in `xp.json` (up to `limit`). No `period` parameter — XP is cumulative, not windowed.
+- `level` is derived from the same level curve the bot itself uses (`total_xp_for_level`/`level_from_xp`, duplicated in `cogs/webapi.py` to avoid importing the `leveling` cog).
+- Eventual consistency: `xp.json` is flushed to disk by the leveling cog roughly every 30 seconds, so values here can trail live activity by up to one flush interval.
+
+### GET `/api/guilds/{gid}/economy`
+
+**Tier:** harmless
+
+Bits-balance leaderboard from the `economy` cog.
+
+Query: `limit`.
+
+```json
+{"entries": [{"user": {…}, "bits": 3150}, …]}
+```
+
+- Sourced from `economy.json` (not `stats.db`).
+- `entries` is sorted by `bits` (balance) descending, covering every user with an entry in `economy.json` (up to `limit`). No `period` parameter.
+- Economy balances save on every change, so this data is fresh (no flush-interval lag, unlike `/leveling`).
+
 ---
 
 ## Data notes

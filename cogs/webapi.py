@@ -11,7 +11,7 @@ from aiohttp import web
 from discord.ext import commands
 
 from .management import rank_of
-from .storage import data_path
+from .storage import data_path, load_json
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,20 @@ _PERIOD_DAYS = {"week": 7, "month": 30, "year": 365}
 # Mirrors cogs/stats.py's TREND_PERIOD_DAYS, kept as its own constant rather
 # than imported so this cog has zero import-time coupling to cogs/stats.py.
 TREND_PERIOD_DAYS = 30
+
+
+# mirrors cogs/leveling.py's level curve
+def total_xp_for_level(level: int) -> int:
+    """Cumulative XP required to reach the given level from 0."""
+    return 25 * level * (level + 1)
+
+
+def level_from_xp(xp: int) -> int:
+    """The level corresponding to a total XP amount."""
+    level = 0
+    while total_xp_for_level(level + 1) <= xp:
+        level += 1
+    return level
 
 
 def _day_str(dt: datetime) -> str:
@@ -65,6 +79,8 @@ class WebAPI(commands.Cog):
         r.add_get("/api/guilds/{gid}/growth", self._handle_growth)
         r.add_get("/api/guilds/{gid}/members/{uid}", self._handle_member)
         r.add_get("/api/guilds/{gid}/quietest", self._handle_quietest)
+        r.add_get("/api/guilds/{gid}/leveling", self._handle_leveling)
+        r.add_get("/api/guilds/{gid}/economy", self._handle_economy)
 
     # --- Lifecycle ------------------------------------------------------
 
@@ -146,6 +162,17 @@ class WebAPI(commands.Cog):
         if channel is None:
             return {"id": str(channel_id), "name": "unknown-channel"}
         return {"id": str(channel_id), "name": channel.name}
+
+    def _role_json(self, guild, role_id: int) -> dict:
+        role = guild.get_role(role_id)
+        if role is None:
+            return {"id": str(role_id), "name": "unknown-role"}
+        return {"id": str(role_id), "name": role.name}
+
+    def _cog_json(self, filename: str) -> dict:
+        """Per-request read of a behavioral cog's JSON data file (small files,
+        no caching needed) - keeps this cog decoupled from importing them."""
+        return load_json(data_path(filename))
 
     @staticmethod
     def _guild_json(guild) -> dict:
@@ -474,6 +501,36 @@ class WebAPI(commands.Cog):
             }
             for m in quietest
         ]
+        return web.json_response({"entries": entries})
+
+    async def _handle_leveling(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        limit = self._limit_param(request)
+        guild_xp = self._cog_json("xp.json").get(str(guild.id), {})
+        rows = sorted(((int(uid), xp) for uid, xp in guild_xp.items()), key=lambda kv: kv[1], reverse=True)
+        if limit is not None:
+            rows = rows[:limit]
+        entries = [
+            {"user": self._user_json(guild, uid), "xp": xp, "level": level_from_xp(xp)} for uid, xp in rows
+        ]
+        return web.json_response({"entries": entries})
+
+    async def _handle_economy(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        limit = self._limit_param(request)
+        guild_bank = self._cog_json("economy.json").get(str(guild.id), {})
+        rows = sorted(
+            ((int(uid), entry.get("balance", 0)) for uid, entry in guild_bank.items()),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )
+        if limit is not None:
+            rows = rows[:limit]
+        entries = [{"user": self._user_json(guild, uid), "bits": bal} for uid, bal in rows]
         return web.json_response({"entries": entries})
 
 
