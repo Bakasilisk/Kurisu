@@ -388,11 +388,22 @@ frontend on the same host calls it over localhost.
 | `GET /api/guilds/{id}/members/{uid}` | One member's profile |
 | `GET /api/guilds/{id}/quietest` | Least-active members, last 30 days (optional `limit=N`) |
 | `GET /api/guilds/{id}/leveling` | XP leaderboard from `xp.json` (optional `limit=N`) |
-| `GET /api/guilds/{id}/economy` | Bits leaderboard from `economy.json` (optional `limit=N`) |
+| `GET /api/guilds/{id}/economy` | Bits leaderboard from `economy.json`, including payday streak (optional `limit=N`) |
 | `GET /api/guilds/{id}/warnings` | Moderation warnings from `warnings.json`, spicy/mod-tier (optional `limit=N`) |
 | `GET /api/guilds/{id}/security` | Cerberus mode/config + live lockdown status, spicy/mod-tier |
 | `GET /api/guilds/{id}/palantir` | Palantir logging config + cached-message count (config only, spicy/mod-tier — surveillance content never exposed) |
 | `GET /api/guilds/{id}/verification` | Verification role/welcome-channel config, spicy/mod-tier |
+| `GET /api/guilds/{id}/moderation` | Mod-log channel + currently-locked channels, spicy/mod-tier (restoration snapshots never exposed) |
+| `GET /api/guilds/{id}/features` | Per-guild `.feature` cog toggle state, spicy/mod-tier |
+| `GET /api/users/{uid}/reminders` | A user's own pending reminders — not guild-scoped |
+
+Member profiles (`/members/{uid}`) also include the member's economy payday streak alongside
+balance/rank.
+
+A third sensitivity tier, `self`, exists alongside harmless/spicy: `self`-tier data (currently
+just reminders) is scoped to one specific user, not readable by other members or by mods —
+`{uid}` must come from the calling consumer's own authenticated session, never user input. Full
+tier semantics are in [API.md](API.md).
 
 ### Logging & data files
 
