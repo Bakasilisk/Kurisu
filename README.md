@@ -33,7 +33,7 @@ commands are also available as `/` slash commands with autocomplete descriptions
 reply ephemerally (visible only to the invoker) while `.` invocations reply publicly — except
 captions, aidetect, trace, and anilist, whose results always reply publicly regardless of
 invocation method.
-The economy sinks (`slots`, `daily`) are prefix-only and public, matching the rest of the economy
+The economy sinks (`slots`) are prefix-only and public, matching the rest of the economy
 cog. The other cogs are prefix-only.
 
 ### Triggers
@@ -96,8 +96,7 @@ A simple bits currency, tracked per server.
 
 | Command | Does | Requires |
 |---|---|---|
-| `payday` | Collect 120 bits, once every 12 hours; shows the new balance and server rank, or the time remaining if already claimed | — |
-| `daily` | Collect 100 bits once every 20 hours, +25 bits per consecutive day (capped at day 7, 250 bits/day); claiming again within 48 hours of the last one extends the streak, later resets it | — |
+| `payday` / `daily` | Collect 100 bits once every 20 hours, +25 bits per consecutive day (capped at day 7, 250 bits/day); claiming again within 48 hours of the last one extends the streak, a later claim resets it; shows the new balance, server rank, and streak, or the time remaining if already claimed | — |
 | `balance` / `bal [member]` | Check bits without claiming | — |
 | `richest [count]` | The server's top bit holders | — |
 | `give <member> <amount>` | Transfer bits to another member | — |

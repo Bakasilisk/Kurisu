@@ -9,8 +9,6 @@ from .storage import data_path, load_json, save_json_atomic
 
 ECONOMY_FILE = data_path("economy.json")
 
-PAYDAY_AMOUNT = 120
-PAYDAY_COOLDOWN_SECONDS = 12 * 60 * 60
 COINFLIP_MIN_BET = 10
 COINFLIP_MAX_BET = 1000
 
@@ -24,11 +22,11 @@ SLOTS_WEIGHTS = (5, 4, 3, 2, 1, 1)
 SLOTS_TRIPLE_PAYOUTS = {"🍒": 4, "🍋": 6, "🍇": 10, "🔔": 25, "💎": 100, "7️⃣": 150}
 SLOTS_PAIR_PAYOUT = 1  # exact pair = push (bet returned)
 
-DAILY_BASE_AMOUNT = 100
-DAILY_STREAK_BONUS = 25          # per consecutive day beyond the first
-DAILY_STREAK_CAP = 7             # bonus stops growing (max 250/day)
-DAILY_COOLDOWN_SECONDS = 20 * 60 * 60
-DAILY_STREAK_WINDOW_SECONDS = 48 * 60 * 60
+PAYDAY_BASE_AMOUNT = 100
+PAYDAY_STREAK_BONUS = 25          # per consecutive day beyond the first
+PAYDAY_STREAK_CAP = 7             # bonus stops growing (max 250/day)
+PAYDAY_COOLDOWN_SECONDS = 20 * 60 * 60
+PAYDAY_STREAK_WINDOW_SECONDS = 48 * 60 * 60
 
 
 def _format_cooldown(seconds) -> str:
@@ -80,11 +78,16 @@ class Economy(commands.Cog):
         else:
             raise error
 
-    @commands.command()
+    @commands.command(name="payday", aliases=["daily"])
     @commands.guild_only()
     async def payday(self, ctx):
-        """Collect your payday bits (once every 12 hours)."""
+        """Collect your payday bits, with a streak bonus for consecutive days."""
         entry = self._account(ctx.guild.id, ctx.author.id)
+        # `streak` isn't in the _account default dict (line ~57) — accounts that
+        # predate the streak mechanic don't have it, so it's backfilled here at
+        # the use site rather than relying on the default (which only applies to
+        # newly created entries).
+        entry.setdefault("streak", 0)
 
         now = time.time()
         remaining = PAYDAY_COOLDOWN_SECONDS - (now - entry["last_payday"])
@@ -94,7 +97,18 @@ class Economy(commands.Cog):
             )
             return
 
-        entry["balance"] += PAYDAY_AMOUNT
+        elapsed = now - entry["last_payday"]
+        previous_streak = entry["streak"]
+        if elapsed <= PAYDAY_STREAK_WINDOW_SECONDS:
+            entry["streak"] += 1
+            streak_broke = False
+        else:
+            entry["streak"] = 1
+            streak_broke = previous_streak > 0
+
+        streak = entry["streak"]
+        amount = PAYDAY_BASE_AMOUNT + PAYDAY_STREAK_BONUS * (min(streak, PAYDAY_STREAK_CAP) - 1)
+        entry["balance"] += amount
         entry["last_payday"] = now
         self._save()
 
@@ -103,52 +117,6 @@ class Economy(commands.Cog):
 
         embed = discord.Embed(
             title="💰 Payday",
-            description=f"{ctx.author.mention} collected **{PAYDAY_AMOUNT} bits**!",
-            color=discord.Color.dark_gold(),
-        )
-        embed.add_field(name="Balance", value=f"{entry['balance']} bits")
-        embed.add_field(name="Server Rank", value=f"#{position}")
-        await ctx.reply(embed=embed)
-
-    @commands.command(name="daily")
-    @commands.guild_only()
-    async def daily(self, ctx):
-        """Collect your daily bits, with a streak bonus for consecutive days."""
-        entry = self._account(ctx.guild.id, ctx.author.id)
-        # last_daily/streak aren't in the _account default dict (line 43) — existing
-        # persisted accounts predate this command regardless, so daily is the sole
-        # reader/writer of these two keys and backfills them here at the use site.
-        entry.setdefault("last_daily", 0.0)
-        entry.setdefault("streak", 0)
-
-        now = time.time()
-        remaining = DAILY_COOLDOWN_SECONDS - (now - entry["last_daily"])
-        if remaining > 0:
-            await ctx.reply(
-                f"⏳ You've already collected your daily. Try again in {_format_cooldown(remaining)}."
-            )
-            return
-
-        elapsed = now - entry["last_daily"]
-        previous_streak = entry["streak"]
-        if elapsed <= DAILY_STREAK_WINDOW_SECONDS:
-            entry["streak"] += 1
-            streak_broke = False
-        else:
-            entry["streak"] = 1
-            streak_broke = previous_streak > 0
-
-        streak = entry["streak"]
-        amount = DAILY_BASE_AMOUNT + DAILY_STREAK_BONUS * (min(streak, DAILY_STREAK_CAP) - 1)
-        entry["balance"] += amount
-        entry["last_daily"] = now
-        self._save()
-
-        guild_bank = self._guild_bank(ctx.guild.id)
-        position = rank_of(guild_bank.items(), lambda kv: kv[1]["balance"], str(ctx.author.id))
-
-        embed = discord.Embed(
-            title="📅 Daily",
             description=f"{ctx.author.mention} collected **{amount} bits**!",
             color=discord.Color.dark_gold(),
         )
