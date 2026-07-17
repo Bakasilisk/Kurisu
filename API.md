@@ -21,7 +21,7 @@ Every endpoint carries a documented sensitivity tier, `harmless` or `spicy`, to 
 | Endpoint | Tier |
 |---|---|
 | `/meta`, `/guilds`, `/overview`, `/growth`, `/top`, `/channels`, `/voice`, `/leveling`, `/economy`, `/members/{uid}` | harmless |
-| `/activity`, `/quietest`, `/warnings`, `/security`, `/palantir`, `/verification`, `/moderation` | spicy |
+| `/activity`, `/quietest`, `/warnings`, `/security`, `/palantir`, `/verification`, `/moderation`, `/features` | spicy |
 
 Note: `/activity` is tiered **spicy** here by deliberate API-side operator choice, even though the bot's own `.stats activity` command is open to every member in the Discord UI. The two don't have to match — the API's tiering is a separate, intentionally more conservative decision (fine-grained hour×weekday activity patterns are treated as more sensitive in aggregate/API form than a one-off Discord command reply).
 
@@ -40,7 +40,8 @@ Which cogs' data is surfaced through this API, and which are deliberately left o
 | verification | config only (spicy) | `/verification` |
 | reminders | no | personal, not guild-scoped |
 | anilist, triggers, captions, aidetect, trace | no | stateless — nothing persisted |
-| management, help, webapi | no | infra cogs |
+| management | config only (spicy) | `/features` — per-guild `.feature` toggle state, one entry per toggleable cog; global disable state also surfaced |
+| help, webapi | no | infra cogs — nothing persisted worth surfacing |
 
 ### Authentication
 
@@ -438,6 +439,27 @@ Moderation configuration: the configured mod-log channel plus the guild's curren
 - `locked_channels` — every channel currently held by `.lock` (or a watchdog lockdown, which reuses the same mechanism), sorted by name. No `limit` parameter.
 - **Note:** `channel_locks.json`'s values are the pre-lock permission-overwrite snapshots `.unlock`/lockdown-lift restore verbatim — an internal restoration mechanism, not status information, and never exposed here. Only the file's keys (locked channel ids) are read.
 - **Limitation:** `channel_locks.json` is keyed by channel id only, with no guild id alongside it. A locked channel the bot can no longer resolve (deleted, or the guild's channel cache is cold) can't be attributed to any guild, so it's silently omitted from every guild's `locked_channels` — including the guild it actually belongs to.
+
+### GET `/api/guilds/{gid}/features`
+
+**Tier:** spicy
+
+Per-guild `.feature` toggle state, one entry per toggleable cog.
+
+```json
+{
+  "cogs": [
+    {"name": "aidetect", "enabled": true, "globally_disabled": false},
+    {"name": "leveling", "enabled": false, "globally_disabled": false},
+    …
+  ]
+}
+```
+
+- `cogs` lists every toggleable cog, sorted by name. The list mirrors the bot's own `.feature list` exactly: every `cogs/*.py` except `__init__`/`storage` (not real cogs) and `management`/`help` (infra, can't disable themselves into inaccessibility) — including cogs whose behavior ignores the toggle entirely (e.g. `webapi` itself, which has no `cog_enabled` gate; toggling it is a no-op).
+- `enabled` — this guild's `.feature enable`/`disable` state, sourced from `management.json`'s `guilds.<gid>.disabled_cogs`. Fails open (`true`) if `management.json` is missing or has no entry for this guild, matching `Management.is_cog_enabled`'s own fail-open semantics.
+- `globally_disabled` — whether the cog's extension (`cogs.<name>`) is in `management.json`'s `global.disabled_extensions`, meaning the bot owner has unloaded it entirely — it isn't running at all, for any guild, regardless of `enabled`. A cog is effectively available iff `enabled` **and not** `globally_disabled`.
+- Sourced from `management.json` (not `stats.db`). No `limit` parameter.
 
 ---
 

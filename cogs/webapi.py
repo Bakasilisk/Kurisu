@@ -42,6 +42,27 @@ def level_from_xp(xp: int) -> int:
     return level
 
 
+# mirrors cogs/management.py's management._discover_cogs (excludes
+# __init__.py/storage.py) narrowed by Management._toggleable_names (further
+# excludes management/help) - kept as its own directory scan rather than
+# imported, matching this file's zero-import-coupling philosophy for mirrored
+# logic. webapi itself IS toggleable per that list (toggling it is a no-op
+# since webapi has no cog_enabled gate), so it's deliberately not excluded.
+_NON_TOGGLEABLE = {"__init__", "storage", "management", "help"}
+
+
+def _toggleable_cog_names() -> list[str]:
+    names = []
+    for filename in os.listdir(os.path.dirname(__file__)):
+        if not filename.endswith(".py"):
+            continue
+        name = filename[:-3]
+        if name in _NON_TOGGLEABLE:
+            continue
+        names.append(name)
+    return sorted(names)
+
+
 def _day_str(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%d")
 
@@ -86,6 +107,7 @@ class WebAPI(commands.Cog):
         r.add_get("/api/guilds/{gid}/palantir", self._handle_palantir)
         r.add_get("/api/guilds/{gid}/verification", self._handle_verification)
         r.add_get("/api/guilds/{gid}/moderation", self._handle_moderation)
+        r.add_get("/api/guilds/{gid}/features", self._handle_features)
 
     # --- Lifecycle ------------------------------------------------------
 
@@ -669,6 +691,23 @@ class WebAPI(commands.Cog):
             "mod_log_channel": self._channel_json(guild, log_channel_id) if log_channel_id is not None else None,
             "locked_channels": locked_channels,
         })
+
+    async def _handle_features(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        conf = self._cog_json("management.json")
+        disabled = set(conf.get("guilds", {}).get(str(guild.id), {}).get("disabled_cogs", []))
+        global_disabled = set(conf.get("global", {}).get("disabled_extensions", []))
+        cogs = [
+            {
+                "name": name,
+                "enabled": name not in disabled,
+                "globally_disabled": f"cogs.{name}" in global_disabled,
+            }
+            for name in _toggleable_cog_names()
+        ]
+        return web.json_response({"cogs": cogs})
 
 
 async def setup(bot):
