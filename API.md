@@ -21,7 +21,7 @@ Every endpoint carries a documented sensitivity tier, `harmless` or `spicy`, to 
 | Endpoint | Tier |
 |---|---|
 | `/meta`, `/guilds`, `/overview`, `/growth`, `/top`, `/channels`, `/voice`, `/leveling`, `/economy`, `/members/{uid}` | harmless |
-| `/activity`, `/quietest`, `/warnings`, `/security`, `/palantir`, `/verification` | spicy |
+| `/activity`, `/quietest`, `/warnings`, `/security`, `/palantir`, `/verification`, `/moderation` | spicy |
 
 Note: `/activity` is tiered **spicy** here by deliberate API-side operator choice, even though the bot's own `.stats activity` command is open to every member in the Discord UI. The two don't have to match — the API's tiering is a separate, intentionally more conservative decision (fine-grained hour×weekday activity patterns are treated as more sensitive in aggregate/API form than a one-off Discord command reply).
 
@@ -34,7 +34,7 @@ Which cogs' data is surfaced through this API, and which are deliberately left o
 | stats | yes (existing) | `overview`/`top`/`channels`/`activity`/`voice`/`growth`/`members/{uid}`/`quietest` |
 | leveling | yes | `/leveling` + member enrichment |
 | economy | yes | `/economy` + member enrichment |
-| moderation (warnings) | yes (spicy) | `/warnings` |
+| moderation | yes (spicy) | `/warnings` (warnings) + `/moderation` (mod-log channel + locked-channel list; restoration snapshots never exposed) |
 | cerberus | yes (spicy) | `/security` |
 | palantir | config only (spicy) | `/palantir` — **surveillance cache/content never exposed** |
 | verification | config only (spicy) | `/verification` |
@@ -420,6 +420,24 @@ Verification role-grant configuration.
 - `target_role` — the role `.verify` grants, or `null` if unset.
 - `welcome_channel` — the channel a welcome greeting is posted to on a successful `.verify`, or `null` if unset.
 - `welcome_enabled` — mirrors `cogs/verification.py`'s own semantics: `welcome_channel_id is not None`. `.verification welcome disable` clears `welcome_channel_id` to `null`, which is exactly how the cog itself represents "welcome messages off" (there is no separate enabled/disabled flag).
+
+### GET `/api/guilds/{gid}/moderation`
+
+**Tier:** spicy
+
+Moderation configuration: the configured mod-log channel plus the guild's currently-locked channels.
+
+```json
+{
+  "mod_log_channel": {"id": "…", "name": "mod-log"},
+  "locked_channels": [{"id": "…", "name": "general"}]
+}
+```
+
+- `mod_log_channel` — sourced from `mod_log.json` (not `stats.db`); the channel `.modlog set` points at, or `null` if unset.
+- `locked_channels` — every channel currently held by `.lock` (or a watchdog lockdown, which reuses the same mechanism), sorted by name. No `limit` parameter.
+- **Note:** `channel_locks.json`'s values are the pre-lock permission-overwrite snapshots `.unlock`/lockdown-lift restore verbatim — an internal restoration mechanism, not status information, and never exposed here. Only the file's keys (locked channel ids) are read.
+- **Limitation:** `channel_locks.json` is keyed by channel id only, with no guild id alongside it. A locked channel the bot can no longer resolve (deleted, or the guild's channel cache is cold) can't be attributed to any guild, so it's silently omitted from every guild's `locked_channels` — including the guild it actually belongs to.
 
 ---
 

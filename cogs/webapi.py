@@ -85,6 +85,7 @@ class WebAPI(commands.Cog):
         r.add_get("/api/guilds/{gid}/security", self._handle_security)
         r.add_get("/api/guilds/{gid}/palantir", self._handle_palantir)
         r.add_get("/api/guilds/{gid}/verification", self._handle_verification)
+        r.add_get("/api/guilds/{gid}/moderation", self._handle_moderation)
 
     # --- Lifecycle ------------------------------------------------------
 
@@ -643,6 +644,30 @@ class WebAPI(commands.Cog):
             # (see Verification.verification_welcome_disable, which clears it to
             # disable welcomes) - mirrored here rather than a separate flag.
             "welcome_enabled": wc is not None,
+        })
+
+    async def _handle_moderation(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        log_channel_id = self._cog_json("mod_log.json").get(str(guild.id))
+        # channel_locks.json's values are permission-overwrite restoration
+        # snapshots - same privacy boundary as /security's lockdown snapshots.
+        # Only the keys (locked channel ids) are ever read here; a snapshot
+        # value itself must never be touched.
+        lock_keys = self._cog_json("channel_locks.json").keys()
+        locked_channels = []
+        for key in lock_keys:
+            try:
+                cid = int(key)
+            except ValueError:
+                continue
+            if guild.get_channel(cid) is not None:
+                locked_channels.append(self._channel_json(guild, cid))
+        locked_channels.sort(key=lambda c: c["name"])
+        return web.json_response({
+            "mod_log_channel": self._channel_json(guild, log_channel_id) if log_channel_id is not None else None,
+            "locked_channels": locked_channels,
         })
 
 
