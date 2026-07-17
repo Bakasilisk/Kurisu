@@ -127,7 +127,7 @@ class Leveling(commands.Cog):
             return
 
         ctx = await self.bot.get_context(message)
-        if ctx.command is not None:
+        if ctx.prefix is not None:
             return
 
         user_id = str(message.author.id)
