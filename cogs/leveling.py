@@ -126,6 +126,10 @@ class Leveling(commands.Cog):
         if not cog_enabled(self.bot, message.guild.id, "leveling"):
             return
 
+        ctx = await self.bot.get_context(message)
+        if ctx.command is not None:
+            return
+
         user_id = str(message.author.id)
         today = self._today_str()
 
