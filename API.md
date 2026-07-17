@@ -270,8 +270,7 @@ An unknown or departed member is **not** a 404: statistics are looked up regardl
 - `busiest_hour` — UTC hour (0–23) with the most messages, or `null` if the member has none.
 - `top_channels` — every channel the member has posted in, sorted by count descending.
 - `leveling` — `xp` (cumulative, from `xp.json`, defaults to `0`), `level` (derived via `level_from_xp`), and `rank` (1-based rank by `xp` among users with an `xp.json` entry, or `null` if the member has none).
-- `economy` — `bits` (balance, from `economy.json`, defaults to `0`) and `rank` (1-based rank by balance, or `null` if the member has no entry).
-- `streak` — consecutive-day payday streak from the economy cog; `0` for accounts that predate the streak mechanic (backfilled lazily on the next payday) or whose streak was reset.
+- `economy` — `bits` (balance, from `economy.json`, defaults to `0`), `rank` (1-based rank by balance, or `null` if the member has no entry), and `streak` (consecutive-day payday streak; `0` for accounts predating the mechanic — backfilled lazily on the next payday — or whose streak was reset).
 - **Note:** warnings are deliberately **not** included here. Warnings are spicy/mod-tier data; they live solely on `GET /api/guilds/{gid}/warnings` so this endpoint stays safely member-readable.
 
 ### GET `/api/guilds/{gid}/quietest`
