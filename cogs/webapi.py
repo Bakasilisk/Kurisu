@@ -108,6 +108,7 @@ class WebAPI(commands.Cog):
         r.add_get("/api/guilds/{gid}/verification", self._handle_verification)
         r.add_get("/api/guilds/{gid}/moderation", self._handle_moderation)
         r.add_get("/api/guilds/{gid}/features", self._handle_features)
+        r.add_get("/api/users/{uid}/reminders", self._handle_user_reminders)
 
     # --- Lifecycle ------------------------------------------------------
 
@@ -708,6 +709,41 @@ class WebAPI(commands.Cog):
             for name in _toggleable_cog_names()
         ]
         return web.json_response({"cogs": cogs})
+
+    async def _handle_user_reminders(self, request: web.Request):
+        # First non-guild-scoped endpoint (self-tier, see API.md) - takes a
+        # bare {uid}, no {gid}/_guild_or_error. Channel resolution therefore
+        # goes through the bot's global self.bot.get_channel rather than
+        # _channel_json (which is guild.get_channel-scoped).
+        try:
+            uid = int(request.match_info["uid"])
+        except ValueError:
+            return web.json_response({"error": "invalid user id"}, status=400)
+
+        all_reminders = self._cog_json("reminders.json").get("reminders", [])
+        user_reminders = sorted(
+            (r for r in all_reminders if r["user_id"] == uid), key=lambda r: r["fire_at"]
+        )
+
+        entries = []
+        for r in user_reminders:
+            channel = self.bot.get_channel(r["channel_id"])
+            if channel is None:
+                channel_json = {"id": str(r["channel_id"]), "name": "unknown-channel"}
+                guild_json = None
+            else:
+                name = getattr(channel, "name", None) or "DM"
+                g = getattr(channel, "guild", None)
+                channel_json = {"id": str(r["channel_id"]), "name": name}
+                guild_json = self._guild_json(g) if g is not None else None
+            entries.append({
+                "id": r["id"],
+                "fire_at": datetime.fromtimestamp(r["fire_at"], tz=timezone.utc).isoformat(),
+                "text": r["text"],
+                "channel": channel_json,
+                "guild": guild_json,
+            })
+        return web.json_response({"reminders": entries})
 
 
 async def setup(bot):

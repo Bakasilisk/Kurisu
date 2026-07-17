@@ -14,14 +14,17 @@ This is a **trusted server-to-server API with no per-user authorization**. A val
 
 ### Sensitivity tiers
 
-Every endpoint carries a documented sensitivity tier, `harmless` or `spicy`, to support a **future** per-user access layer: any member would be able to read `harmless` data (their own and others' chat activity and gamification stats), while `spicy` data (moderation actions, security posture, surveillance state, server setup/config) stays mod-only.
+Every endpoint carries a documented sensitivity tier, `harmless`, `spicy`, or `self`, to support a **future** per-user access layer: any member would be able to read `harmless` data (their own and others' chat activity and gamification stats), `spicy` data (moderation actions, security posture, surveillance state, server setup/config) stays mod-only, and `self` data is visible only to the specific user it belongs to.
 
-**Today, this tier is documentation and response-shape structure only** — it is *not yet enforced* by the API itself. Enforcement currently happens frontend-side (kurisu-web's own guild-scoping) or is expected to happen server-to-server (a trusted consumer decides who sees what); `cogs/webapi.py` does not itself check a per-user role before answering a request. Treat the tier as a contract for how a future auth layer will gate these endpoints, and as a hard rule for this cog's own design: **a spicy field must never be nested inside a harmless endpoint's response** — e.g. warnings are deliberately not part of `/members/{uid}`, they live solely on the spicy `/warnings` endpoint, so that a future harmless-only auth scope can safely expose `/members/{uid}` wholesale without a field-level allowlist.
+`self`-tier data isn't member-readable (not `harmless` — it's not meant for anyone-about-anyone) and isn't mod-readable (not `spicy` — a mod has no special claim to another user's personal data). A consumer must derive `{uid}` exclusively from its own authenticated session (exactly as kurisu-web's `/me` flow does today), **never** from user-supplied input — there is no guild-membership or moderator check that could substitute for that, since these endpoints aren't guild-scoped at all.
+
+**Today, this tier is documentation and response-shape structure only** — it is *not yet enforced* by the API itself. Enforcement currently happens frontend-side (kurisu-web's own guild-scoping, and — for `self` — its own-session `{uid}` derivation) or is expected to happen server-to-server (a trusted consumer decides who sees what); `cogs/webapi.py` does not itself check a per-user role before answering a request. Treat the tier as a contract for how a future auth layer will gate these endpoints, and as a hard rule for this cog's own design: **a spicy field must never be nested inside a harmless endpoint's response** — e.g. warnings are deliberately not part of `/members/{uid}`, they live solely on the spicy `/warnings` endpoint, so that a future harmless-only auth scope can safely expose `/members/{uid}` wholesale without a field-level allowlist. The same isolation applies to `self`: a `self`-tier field must never be nested inside a `harmless` or `spicy` response either.
 
 | Endpoint | Tier |
 |---|---|
 | `/meta`, `/guilds`, `/overview`, `/growth`, `/top`, `/channels`, `/voice`, `/leveling`, `/economy`, `/members/{uid}` | harmless |
 | `/activity`, `/quietest`, `/warnings`, `/security`, `/palantir`, `/verification`, `/moderation`, `/features` | spicy |
+| `/users/{uid}/reminders` | self |
 
 Note: `/activity` is tiered **spicy** here by deliberate API-side operator choice, even though the bot's own `.stats activity` command is open to every member in the Discord UI. The two don't have to match — the API's tiering is a separate, intentionally more conservative decision (fine-grained hour×weekday activity patterns are treated as more sensitive in aggregate/API form than a one-off Discord command reply).
 
@@ -38,7 +41,7 @@ Which cogs' data is surfaced through this API, and which are deliberately left o
 | cerberus | yes (spicy) | `/security` |
 | palantir | config only (spicy) | `/palantir` — **surveillance cache/content never exposed** |
 | verification | config only (spicy) | `/verification` |
-| reminders | no | personal, not guild-scoped |
+| reminders | yes (self) | `/users/{uid}/reminders` — a user's own pending reminders only |
 | anilist, triggers, captions, aidetect, trace | no | stateless — nothing persisted |
 | management | config only (spicy) | `/features` — per-guild `.feature` toggle state, one entry per toggleable cog; global disable state also surfaced |
 | help, webapi | no | infra cogs — nothing persisted worth surfacing |
@@ -70,6 +73,8 @@ Errors are JSON objects with a single `error` string:
 | `500` | `{"error": "internal error"}` | unhandled server error (details in the bot log) |
 
 Note: requesting stats for a **user** the bot doesn't know is *not* an error — see `/members/{uid}` below.
+
+Note: the `/users/{uid}/...` endpoints (currently just `/users/{uid}/reminders`) aren't guild-scoped, so the `404 unknown guild` row never applies to them — an unknown `{uid}` on those endpoints isn't an error either (see `/users/{uid}/reminders` below), only a malformed `{uid}` is.
 
 ## Conventions
 
@@ -460,6 +465,40 @@ Per-guild `.feature` toggle state, one entry per toggleable cog.
 - `enabled` — this guild's `.feature enable`/`disable` state, sourced from `management.json`'s `guilds.<gid>.disabled_cogs`. Fails open (`true`) if `management.json` is missing or has no entry for this guild, matching `Management.is_cog_enabled`'s own fail-open semantics.
 - `globally_disabled` — whether the cog's extension (`cogs.<name>`) is in `management.json`'s `global.disabled_extensions`, meaning the bot owner has unloaded it entirely — it isn't running at all, for any guild, regardless of `enabled`. A cog is effectively available iff `enabled` **and not** `globally_disabled`.
 - Sourced from `management.json` (not `stats.db`). No `limit` parameter.
+
+### GET `/api/users/{uid}/reminders`
+
+**Tier:** self
+
+The API's **first endpoint outside `/api/guilds/{gid}/...`** — reminders are a user-scoped, not guild-scoped, resource (see `cogs/reminders.py`), so this path takes a bare `{uid}` with no guild in it at all. A consumer must derive `{uid}` from its own authenticated session, never from user input — see the `self` tier definition above.
+
+A user's own pending (not-yet-fired) reminders.
+
+```json
+{
+  "reminders": [
+    {
+      "id": 3,
+      "fire_at": "2026-07-18T12:00:00+00:00",
+      "text": "walk the dog",
+      "channel": {"id": "123456789012345678", "name": "general"},
+      "guild": {"id": "…", "name": "…", "icon": null}
+    }
+  ]
+}
+```
+
+- Sourced from `reminders.json` (not `stats.db`), filtered to `user_id == {uid}`.
+- `reminders` — sorted by `fire_at` ascending (soonest first), matching the order the bot's own `.reminders` command lists them in.
+- No `limit` parameter: the bot caps pending reminders at 10 per user (`MAX_REMINDERS_PER_USER` in `cogs/reminders.py`), so the full list is already short.
+- `fire_at` is ISO8601 UTC with an explicit offset (`datetime.fromtimestamp(..., tz=timezone.utc).isoformat()`), the same format `/warnings`' `timestamp` uses — not the raw Unix float `reminders.json` stores on disk.
+- `id` is a **plain JSON integer**, a documented exception to the string-snowflake rule above: it's a small per-reminder counter (`reminders.json`'s `next_id`), not a Discord snowflake, so it never approaches the 2^53 precision boundary and doesn't need string encoding.
+- `channel` is resolved via the bot's **global** `self.bot.get_channel` (this endpoint has no guild to scope a lookup to, unlike the Channel object described above, which uses `guild.get_channel`):
+  - a resolvable guild channel — `{"id": "…", "name": channel.name}`, with `guild` set to that channel's Guild object.
+  - a resolvable but guild-less channel (a cached DM channel) — `{"id": "…", "name": "DM"}`, with `guild: null`.
+  - unresolvable (deleted, or not in cache) — `{"id": "…", "name": "unknown-channel"}`, with `guild: null`.
+  - `channel.id` is always a string, per the snowflake convention, regardless of which case applies.
+- **Errors:** `400 {"error": "invalid user id"}` for a non-integer `{uid}`, mirroring `/members/{uid}`'s parsing. An unknown `{uid}` (the bot has never seen this user) or a user with no pending reminders is **not** an error — both return `{"reminders": []}`, the same "absence isn't an error" semantics `/members/{uid}` uses for stats. The guild-specific error rows (`400 invalid guild id`, `404 unknown guild`) don't apply — this endpoint has no `{gid}`.
 
 ---
 
