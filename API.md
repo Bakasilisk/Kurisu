@@ -258,7 +258,7 @@ An unknown or departed member is **not** a 404: statistics are looked up regardl
   "reactions_received": 990,
   "top_channels": [{"channel": {…}, "count": 5120}, …],
   "leveling": {"xp": 4820, "level": 12, "rank": 3},
-  "economy": {"bits": 3150, "rank": 7}
+  "economy": {"bits": 3150, "rank": 7, "streak": 4}
 }
 ```
 
@@ -271,6 +271,7 @@ An unknown or departed member is **not** a 404: statistics are looked up regardl
 - `top_channels` — every channel the member has posted in, sorted by count descending.
 - `leveling` — `xp` (cumulative, from `xp.json`, defaults to `0`), `level` (derived via `level_from_xp`), and `rank` (1-based rank by `xp` among users with an `xp.json` entry, or `null` if the member has none).
 - `economy` — `bits` (balance, from `economy.json`, defaults to `0`) and `rank` (1-based rank by balance, or `null` if the member has no entry).
+- `streak` — consecutive-day payday streak from the economy cog; `0` for accounts that predate the streak mechanic (backfilled lazily on the next payday) or whose streak was reset.
 - **Note:** warnings are deliberately **not** included here. Warnings are spicy/mod-tier data; they live solely on `GET /api/guilds/{gid}/warnings` so this endpoint stays safely member-readable.
 
 ### GET `/api/guilds/{gid}/quietest`
@@ -314,12 +315,13 @@ Bits-balance leaderboard from the `economy` cog.
 Query: `limit`.
 
 ```json
-{"entries": [{"user": {…}, "bits": 3150}, …]}
+{"entries": [{"user": {…}, "bits": 3150, "streak": 4}, …]}
 ```
 
 - Sourced from `economy.json` (not `stats.db`).
 - `entries` is sorted by `bits` (balance) descending, covering every user with an entry in `economy.json` (up to `limit`). No `period` parameter.
 - Economy balances save on every change, so this data is fresh (no flush-interval lag, unlike `/leveling`).
+- `streak` — consecutive-day payday streak from the economy cog; `0` for accounts that predate the streak mechanic (backfilled lazily on the next payday) or whose streak was reset.
 
 ### GET `/api/guilds/{gid}/warnings`
 

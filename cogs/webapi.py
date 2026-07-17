@@ -499,7 +499,9 @@ class WebAPI(commands.Cog):
         lvl_rank = rank_of(((int(k), v) for k, v in guild_xp.items()), key=lambda kv: kv[1], target_id=uid)
 
         guild_bank = self._cog_json("economy.json").get(str(guild.id), {})
-        bits = guild_bank.get(str(uid), {}).get("balance", 0)
+        econ_entry = guild_bank.get(str(uid), {})
+        bits = econ_entry.get("balance", 0)
+        streak = econ_entry.get("streak", 0)
         econ_rank = rank_of(
             ((int(k), e.get("balance", 0)) for k, e in guild_bank.items()), key=lambda kv: kv[1], target_id=uid
         )
@@ -519,7 +521,7 @@ class WebAPI(commands.Cog):
             "reactions_received": received,
             "top_channels": [{"channel": self._channel_json(guild, cid), "count": c} for cid, c in channel_rows],
             "leveling": {"xp": xp, "level": level_from_xp(xp), "rank": lvl_rank},
-            "economy": {"bits": bits, "rank": econ_rank},
+            "economy": {"bits": bits, "rank": econ_rank, "streak": streak},
         })
 
     async def _handle_quietest(self, request: web.Request):
@@ -567,13 +569,20 @@ class WebAPI(commands.Cog):
         limit = self._limit_param(request)
         guild_bank = self._cog_json("economy.json").get(str(guild.id), {})
         rows = sorted(
-            ((int(uid), entry.get("balance", 0)) for uid, entry in guild_bank.items()),
-            key=lambda kv: kv[1],
+            ((int(uid), entry) for uid, entry in guild_bank.items()),
+            key=lambda kv: kv[1].get("balance", 0),
             reverse=True,
         )
         if limit is not None:
             rows = rows[:limit]
-        entries = [{"user": self._user_json(guild, uid), "bits": bal} for uid, bal in rows]
+        entries = [
+            {
+                "user": self._user_json(guild, uid),
+                "bits": entry.get("balance", 0),
+                "streak": entry.get("streak", 0),
+            }
+            for uid, entry in rows
+        ]
         return web.json_response({"entries": entries})
 
     async def _handle_warnings(self, request: web.Request):
