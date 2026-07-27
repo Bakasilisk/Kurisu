@@ -2,6 +2,7 @@ import asyncio
 import copy
 import random
 import time
+import typing
 from datetime import datetime, time as dt_time, timezone
 
 import discord
@@ -12,6 +13,7 @@ from .storage import data_path, load_json, save_json_atomic
 
 XP_FILE = data_path("xp.json")
 MESSAGES_FILE = data_path("messages.json")
+EXCLUDE_FILE = data_path("leveling_exclude.json")
 
 XP_MIN = 15
 XP_MAX = 25
@@ -37,6 +39,7 @@ class Leveling(commands.Cog):
         self.bot = bot
         self.xp = load_json(XP_FILE)
         self.messages = load_json(MESSAGES_FILE)
+        self.excluded = load_json(EXCLUDE_FILE)
         self._cooldowns = {}
         self._dirty = False
         self._messages_dirty = False
@@ -72,6 +75,12 @@ class Leveling(commands.Cog):
     def _today_str(self) -> str:
         """Return today's date in YYYY-MM-DD format (UTC)."""
         return datetime.now(timezone.utc).date().isoformat()
+
+    def _save_excluded(self):
+        """Save the excluded-channel config. Synchronous, like moderation's
+        _save_mod_log_channels — config writes are infrequent and don't need
+        to go through the XP flush loop."""
+        save_json_atomic(EXCLUDE_FILE, self.excluded)
 
     async def _save_with_dirty_flag(self, dirty_attr: str, file_path: str, data: dict) -> None:
         """Save data to file and reset dirty flag on success, or set it on failure for retry."""
@@ -110,6 +119,8 @@ class Leveling(commands.Cog):
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MemberNotFound):
             await ctx.reply("I couldn't find that member.")
+        elif isinstance(error, (commands.ChannelNotFound, commands.BadUnionArgument)):
+            await ctx.reply("I couldn't find that channel.")
         elif isinstance(error, commands.CheckAnyFailure):
             # A CheckFailure sibling, not a MissingPermissions subclass — common_error_reply
             # doesn't recognize it and would otherwise silently swallow it as a bare CheckFailure.
@@ -119,11 +130,33 @@ class Leveling(commands.Cog):
         else:
             raise error
 
+    def _is_excluded(self, guild_id: int, channel) -> bool:
+        """Whether a message's channel (or its parent channel/category, for a
+        thread, or its category, for a text/voice channel) is excluded from
+        leveling for this guild."""
+        excluded = self.excluded.get(str(guild_id))
+        if not excluded:
+            return False
+        ids = {channel.id}
+        parent_id = getattr(channel, "parent_id", None)      # thread → parent chan
+        if parent_id:
+            ids.add(parent_id)
+        category_id = getattr(channel, "category_id", None)  # chan → category
+        if category_id:
+            ids.add(category_id)
+        parent = getattr(channel, "parent", None)            # thread → parent's category
+        parent_cat = getattr(parent, "category_id", None) if parent else None
+        if parent_cat:
+            ids.add(parent_cat)
+        return not ids.isdisjoint(excluded)
+
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not message.guild:
             return
         if not cog_enabled(self.bot, message.guild.id, "leveling"):
+            return
+        if self._is_excluded(message.guild.id, message.channel):
             return
 
         ctx = await self.bot.get_context(message)
@@ -261,6 +294,62 @@ class Leveling(commands.Cog):
             guild_xp[str(member.id)] = amount
             await self._save_with_dirty_flag("_dirty", XP_FILE, self._snapshot())
         await ctx.reply(f"✅ Set {member.mention}'s XP to **{amount}** (Level {level_from_xp(amount)}).")
+
+    @commands.group(invoke_without_command=True)
+    @has_permissions_or_owner(manage_guild=True)
+    @commands.guild_only()
+    async def xpignore(self, ctx):
+        """List channels/categories/threads excluded from earning XP."""
+        excluded = self.excluded.get(str(ctx.guild.id), [])
+        if not excluded:
+            await ctx.reply("No channels are excluded from leveling.")
+            return
+        lines = []
+        for channel_id in excluded:
+            channel = ctx.guild.get_channel(channel_id)
+            lines.append(channel.mention if channel else f"#deleted ({channel_id})")
+        await ctx.reply("Excluded from leveling:\n" + "\n".join(lines))
+
+    @xpignore.command(name="add")
+    @has_permissions_or_owner(manage_guild=True)
+    @commands.guild_only()
+    async def xpignore_add(
+        self,
+        ctx,
+        target: typing.Union[
+            discord.TextChannel, discord.VoiceChannel, discord.CategoryChannel, discord.Thread
+        ],
+    ):
+        """Exclude a channel, category, or thread from earning XP. Excluding a
+        category excludes its channels; excluding a channel excludes its threads."""
+        excluded = self.excluded.setdefault(str(ctx.guild.id), [])
+        if target.id in excluded:
+            await ctx.reply(f"{target.mention} is already excluded.")
+            return
+        excluded.append(target.id)
+        self._save_excluded()
+        await ctx.reply(f"🚫 {target.mention} is now excluded from leveling.")
+
+    @xpignore.command(name="remove")
+    @has_permissions_or_owner(manage_guild=True)
+    @commands.guild_only()
+    async def xpignore_remove(
+        self,
+        ctx,
+        target: typing.Union[
+            discord.TextChannel, discord.VoiceChannel, discord.CategoryChannel, discord.Thread
+        ],
+    ):
+        """Re-include a previously excluded channel, category, or thread."""
+        excluded = self.excluded.get(str(ctx.guild.id), [])
+        if target.id not in excluded:
+            await ctx.reply(f"{target.mention} was not excluded.")
+            return
+        excluded.remove(target.id)
+        if not excluded:
+            self.excluded.pop(str(ctx.guild.id), None)
+        self._save_excluded()
+        await ctx.reply(f"✅ {target.mention} is no longer excluded from leveling.")
 
 
 async def setup(bot):
