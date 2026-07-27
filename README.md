@@ -81,7 +81,10 @@ Auto-replies on every message:
 ### Leveling
 
 Members earn 15-25 XP per message (60s cooldown to prevent spam farming), with an
-announcement on level-up. Per-member message counts reset monthly.
+announcement on level-up. Per-member message counts reset monthly. Channels, categories,
+and threads can be excluded from leveling entirely — messages there earn no XP and aren't
+counted at all; excluding a category excludes every channel under it, and excluding a
+text/forum channel excludes its threads.
 
 | Command | Does | Requires |
 |---|---|---|
@@ -89,6 +92,9 @@ announcement on level-up. Per-member message counts reset monthly.
 | `leaderboard` / `lb` / `top [count]` | The server's top members | — |
 | `resetxp <member>` | Clear a member's progress | Moderate Members |
 | `setxp <member> <amount>` | Set a member's XP directly | Moderate Members |
+| `xpignore` | List channels/categories/threads excluded from earning XP | Manage Server |
+| `xpignore add <channel/category/thread>` | Exclude it from leveling | Manage Server |
+| `xpignore remove <channel/category/thread>` | Re-include a previously excluded target | Manage Server |
 
 ### Economy
 

@@ -14,6 +14,7 @@ mod_log.json
 # Leveling data
 xp.json
 messages.json
+leveling_exclude.json
 
 # Economy data
 economy.json
