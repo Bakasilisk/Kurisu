@@ -162,6 +162,14 @@ class WebAPI(commands.Cog):
     async def _fetch(self, sql: str, params: tuple = ()) -> list[tuple]:
         return await asyncio.to_thread(self._query, sql, params)
 
+    async def _fetch_one(self, sql: str, params: tuple, default: tuple) -> tuple:
+        # Aggregate COALESCE(...) queries always return exactly one row once
+        # they run - but _query returns [] outright when stats.db doesn't
+        # exist yet (or a query errors), so callers that assume rows[0]
+        # exists need this fallback to the same zero-row COALESCE would give.
+        rows = await self._fetch(sql, params)
+        return rows[0] if rows else default
+
     # --- Auth middleware ----------------------------------------------------
 
     @web.middleware
@@ -253,26 +261,26 @@ class WebAPI(commands.Cog):
         if err:
             return err
 
-        totals = await self._fetch(
+        total_count, total_words, first_day = await self._fetch_one(
             "SELECT COALESCE(SUM(count),0), COALESCE(SUM(words),0), MIN(day) FROM messages WHERE guild_id = ?",
             (guild.id,),
+            default=(0, 0, None),
         )
-        total_count, total_words, first_day = totals[0]
 
         now = datetime.now(timezone.utc)
         trend_start = _day_str(now - timedelta(days=TREND_PERIOD_DAYS))
         prior_start = _day_str(now - timedelta(days=2 * TREND_PERIOD_DAYS))
-        recent = await self._fetch(
+        recent_count, active_members = await self._fetch_one(
             "SELECT COALESCE(SUM(count),0), COUNT(DISTINCT user_id) FROM messages "
             "WHERE guild_id = ? AND day >= ?",
             (guild.id, trend_start),
+            default=(0, 0),
         )
-        recent_count, active_members = recent[0]
-        prior = await self._fetch(
+        prior_count, = await self._fetch_one(
             "SELECT COALESCE(SUM(count),0) FROM messages WHERE guild_id = ? AND day >= ? AND day < ?",
             (guild.id, prior_start, trend_start),
+            default=(0,),
         )
-        prior_count = prior[0][0]
 
         if prior_count:
             pct = (recent_count - prior_count) / prior_count * 100
@@ -291,11 +299,11 @@ class WebAPI(commands.Cog):
             elapsed_days = 1
         avg_day = total_count / elapsed_days
 
-        reaction_total = await self._fetch(
-            "SELECT COALESCE(SUM(given),0) FROM reactions WHERE guild_id = ?", (guild.id,)
+        reaction_total, = await self._fetch_one(
+            "SELECT COALESCE(SUM(given),0) FROM reactions WHERE guild_id = ?", (guild.id,), default=(0,)
         )
-        voice_total = await self._fetch(
-            "SELECT COALESCE(SUM(seconds),0) FROM voice WHERE guild_id = ?", (guild.id,)
+        voice_total, = await self._fetch_one(
+            "SELECT COALESCE(SUM(seconds),0) FROM voice WHERE guild_id = ?", (guild.id,), default=(0,)
         )
 
         return web.json_response({
@@ -305,8 +313,8 @@ class WebAPI(commands.Cog):
             "first_day": first_day,
             "active_members_30d": active_members,
             "avg_day": avg_day,
-            "reactions": reaction_total[0][0],
-            "voice_seconds": voice_total[0][0],
+            "reactions": reaction_total,
+            "voice_seconds": voice_total,
             "trend": {"recent": recent_count, "prior": prior_count, "pct": pct, "text": text},
         })
 
@@ -422,19 +430,18 @@ class WebAPI(commands.Cog):
         if start_day:
             sql += " AND day >= ?"
             params.append(start_day)
-        row = await self._fetch(sql, tuple(params))
-        joins, leaves = row[0]
+        joins, leaves = await self._fetch_one(sql, tuple(params), default=(0, 0))
 
         msg_sql = "SELECT COALESCE(SUM(count),0) FROM messages WHERE guild_id = ?"
         msg_params = [guild.id]
         if start_day:
             msg_sql += " AND day >= ?"
             msg_params.append(start_day)
-        msg_row = await self._fetch(msg_sql, tuple(msg_params))
+        messages, = await self._fetch_one(msg_sql, tuple(msg_params), default=(0,))
 
         return web.json_response({
             "period": period, "joins": joins, "leaves": leaves,
-            "net": joins - leaves, "messages": msg_row[0][0],
+            "net": joins - leaves, "messages": messages,
         })
 
     async def _handle_member(self, request: web.Request):
@@ -446,33 +453,33 @@ class WebAPI(commands.Cog):
         except ValueError:
             return web.json_response({"error": "invalid user id"}, status=400)
 
-        msg_row = await self._fetch(
+        total_count, total_words, active_days, first_day = await self._fetch_one(
             "SELECT COALESCE(SUM(count),0), COALESCE(SUM(words),0), COUNT(DISTINCT day), MIN(day) "
             "FROM messages WHERE guild_id = ? AND user_id = ?",
             (guild.id, uid),
+            default=(0, 0, 0, None),
         )
-        total_count, total_words, active_days, first_day = msg_row[0]
 
-        server_row = await self._fetch(
-            "SELECT COALESCE(SUM(count),0) FROM messages WHERE guild_id = ?", (guild.id,)
+        server_total, = await self._fetch_one(
+            "SELECT COALESCE(SUM(count),0) FROM messages WHERE guild_id = ?", (guild.id,), default=(0,)
         )
-        server_total = server_row[0][0]
 
         rank_rows = await self._fetch(
             "SELECT user_id, SUM(count) as c FROM messages WHERE guild_id = ? GROUP BY user_id", (guild.id,)
         )
         rank = rank_of(rank_rows, key=lambda kv: kv[1], target_id=uid)
 
-        reaction_row = await self._fetch(
+        given, received = await self._fetch_one(
             "SELECT COALESCE(SUM(given),0), COALESCE(SUM(received),0) FROM reactions "
             "WHERE guild_id = ? AND user_id = ?",
             (guild.id, uid),
+            default=(0, 0),
         )
-        given, received = reaction_row[0]
 
-        voice_row = await self._fetch(
+        voice_seconds, = await self._fetch_one(
             "SELECT COALESCE(SUM(seconds),0) FROM voice WHERE guild_id = ? AND user_id = ?",
             (guild.id, uid),
+            default=(0,),
         )
 
         busiest_hour_row = await self._fetch(
@@ -516,7 +523,7 @@ class WebAPI(commands.Cog):
             "pct_of_server": pct_of_server,
             "words_per_msg": words_per_msg,
             "busiest_hour": busiest_hour,
-            "voice_seconds": voice_row[0][0],
+            "voice_seconds": voice_seconds,
             "reactions_given": given,
             "reactions_received": received,
             "top_channels": [{"channel": self._channel_json(guild, cid), "count": c} for cid, c in channel_rows],
