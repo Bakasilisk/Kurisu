@@ -80,7 +80,7 @@ Auto-replies on every message:
 
 ### Leveling
 
-Members earn 15-25 XP per message (60s cooldown to prevent spam farming), with an
+Members earn 15-25 XP per message (5 min cooldown to prevent spam farming), with an
 announcement on level-up. Per-member message counts reset monthly. Channels, categories,
 and threads can be excluded from leveling entirely — messages there earn no XP and aren't
 counted at all; excluding a category excludes every channel under it, and excluding a
