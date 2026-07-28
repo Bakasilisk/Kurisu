@@ -88,6 +88,30 @@ async def on_ready():
         _synced = True
 
 
+@bot.event
+async def on_command_error(ctx, error):
+    """Log genuine command failures, but not a message that merely starts with
+    the prefix. Someone typing "..." in chat raised CommandNotFound, which the
+    library's default handler logged as an ERROR with a traceback — and since
+    those were the only ERROR lines being written, a real failure was
+    indistinguishable from chat noise.
+
+    Command.dispatch_error fires command_error from a finally block, so this
+    runs even when a cog's cog_command_error already replied to the user. The
+    two deferral checks below are what the default handler used to do to avoid
+    reporting those a second time; overriding the event replaces that logic, so
+    they have to be repeated here."""
+    if isinstance(error, commands.CommandNotFound):
+        return
+
+    if ctx.command is not None and ctx.command.has_error_handler():
+        return
+    if ctx.cog is not None and ctx.cog.has_error_handler():
+        return
+
+    logger.error("Ignoring exception in command %s", ctx.command, exc_info=error)
+
+
 async def main():
     async with bot:
         disabled = globally_disabled_extensions()
