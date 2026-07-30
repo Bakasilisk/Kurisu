@@ -1,6 +1,7 @@
 import glob
 import os
 import random
+import re
 
 import discord
 from discord.ext import commands
@@ -15,6 +16,8 @@ NUKO_MIDDLE = "<:nukoMittel:988561885131599982>"
 NUKO_END = "<:nukoVorne:988561886490533978>"
 NUKO_MIN_REPEAT = 3
 NUKO_MAX_REPEAT = 12
+
+HORNY_PATTERN = re.compile(r"\bhorny\b", re.IGNORECASE)
 
 KING_DIR = data_path(os.path.join("assets", "king"))
 KING_SELF_GIF = os.path.join(KING_DIR, "self.gif")
@@ -48,7 +51,7 @@ class Triggers(commands.Cog):
     @commands.command(name="sex")
     async def sex(self, ctx):
         """Post a YouTube video."""
-        await ctx.reply("https://www.youtube.com/watch?v=qzPKgTuRwbs")
+        await ctx.reply("https://www.youtube.com/watch?v=ce4IzbEQyNo")
 
     @commands.command(name="king")
     async def king(self, ctx, member: discord.Member = None):
@@ -69,8 +72,8 @@ class Triggers(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        # Prevent the bot from replying to itself
-        if message.author == self.bot.user:
+        # Ignore all bots (itself included) so two bots can't trigger each other
+        if message.author.bot:
             return
 
         if message.guild and not cog_enabled(self.bot, message.guild.id, "triggers"):
@@ -82,8 +85,8 @@ class Triggers(commands.Cog):
             response = "*Hör auf mich* ***Kurisutina*** *zu nennen!*"
             await message.reply(response)
 
-        # Check if "horny" is in the message content (case-insensitive)
-        if "horny" in message.content.lower():
+        # Check if "horny" appears as a whole word (case-insensitive) — not inside e.g. "thorny"
+        if HORNY_PATTERN.search(message.content):
             await message.reply(f"{message.author.mention} ist Horny!")
 
         # Check if "kurisu stimmt mir zu" is in the message content (case-insensitive)
