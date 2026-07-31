@@ -29,13 +29,13 @@ def _discover_cogs() -> dict[str, str]:
 
 def _to_extension(name: str) -> str:
     """Normalize user input ("moderation" or "cogs.moderation") to an extension name."""
-    name = name.strip()
+    name = name.strip().lower()
     return name if name.startswith("cogs.") else f"cogs.{name}"
 
 
 def _to_short_name(name: str) -> str:
     """Normalize user input ("moderation" or "cogs.moderation") to a short cog name."""
-    return name.strip().removeprefix("cogs.")
+    return name.strip().lower().removeprefix("cogs.")
 
 
 def _default_config() -> dict:
@@ -285,7 +285,7 @@ class Management(commands.Cog):
     # --- Owner-only: cog control -------------------------------------------------
 
     @commands.hybrid_group(
-        name="cog", invoke_without_command=True, fallback="help",
+        name="cog", invoke_without_command=True, fallback="help", case_insensitive=True,
         description="Manage loaded cogs (owner only).",
     )
     @app_commands.default_permissions(administrator=True)
@@ -436,7 +436,7 @@ class Management(commands.Cog):
     # --- Server-admin: per-guild feature toggles ----------------------------------
 
     @commands.hybrid_group(
-        name="feature", invoke_without_command=True, fallback="help",
+        name="feature", invoke_without_command=True, fallback="help", case_insensitive=True,
         description="Enable/disable a cog's behavior in this server.",
     )
     @app_commands.default_permissions(manage_guild=True)
@@ -470,6 +470,7 @@ class Management(commands.Cog):
     @app_commands.autocomplete(name=_disabled_feature_autocomplete)
     async def feature_enable(self, ctx, name: str):
         """Enable a cog's behavior in this server."""
+        name = _to_short_name(name)
         if name not in self._toggleable_names():
             await self._reply(ctx, embed=self._embed(f"`{name}` isn't a toggleable feature."))
             return
@@ -484,6 +485,7 @@ class Management(commands.Cog):
     @app_commands.autocomplete(name=_enabled_feature_autocomplete)
     async def feature_disable(self, ctx, name: str):
         """Disable a cog's behavior in this server."""
+        name = _to_short_name(name)
         if name not in self._toggleable_names():
             await self._reply(ctx, embed=self._embed(f"`{name}` isn't a toggleable feature."))
             return

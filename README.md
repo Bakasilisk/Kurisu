@@ -36,6 +36,14 @@ invocation method.
 The economy sinks (`slots`) are prefix-only and public, matching the rest of the economy
 cog. The other cogs are prefix-only.
 
+Command names, subcommand names, and keyword arguments chosen from a fixed set (`stats top`'s
+`period`, cog/feature names, `cerberus mode`, palantir's categories) are case-insensitive —
+`.stats User`, `.STATS top Week`, and `.Cog Reload Stats` all work the same as their lowercase
+form. Names looked up against Discord itself (a member, role, or channel given by name rather
+than mention or ID) still match however Discord stores them. The one deliberate exception among
+the fixed-set arguments is `stats reset`'s `confirm`, which must be the exact lowercase word
+`confirm` — a speed bump on an irreversible per-server data wipe.
+
 ### Triggers
 
 Auto-replies on every message:
@@ -141,9 +149,11 @@ not just full days. It's idempotent: re-running (e.g. after inviting the bot to 
 only replaces its own previously-seeded data, never live-tracked data.
 
 `stats reset` wipes all of a server's stats (messages, reactions, voice, joins/leaves, backfill
-history) — irreversible, so it no-ops with a warning unless run as `stats reset confirm`. Existing
-databases migrate automatically on the first launch after an update, but `stats reset confirm`
-(or a fresh `stats.db`) gives the cleanest numbers after a stats-schema change like this one.
+history) — irreversible, so it no-ops with a warning unless run as `stats reset confirm`. Unlike
+every other command/argument in the bot, `confirm` must be lowercase exactly — `Confirm` or
+`CONFIRM` just re-shows the warning. Existing databases migrate automatically on the first launch
+after an update, but `stats reset confirm` (or a fresh `stats.db`) gives the cleanest numbers
+after a stats-schema change like this one.
 
 ### Verification
 

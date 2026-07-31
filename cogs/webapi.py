@@ -226,7 +226,9 @@ class WebAPI(commands.Cog):
 
     @staticmethod
     def _period_param(request: web.Request, default: str) -> str:
-        period = request.query.get("period", default)
+        # Lowercased to match stats' now-case-insensitive period arg; falls
+        # back to `default` silently on a miss, same as before.
+        period = request.query.get("period", default).lower()
         return period if period in ("week", "month", "year", "all") else default
 
     @staticmethod

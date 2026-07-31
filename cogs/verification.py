@@ -64,7 +64,7 @@ class Verification(commands.Cog):
         else:
             raise error
 
-    @commands.group(invoke_without_command=True)
+    @commands.group(invoke_without_command=True, case_insensitive=True)
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
     async def verification(self, ctx):
@@ -119,7 +119,7 @@ class Verification(commands.Cog):
             allowed_mentions=discord.AllowedMentions(roles=False),
         )
 
-    @verification.group(name="welcome", invoke_without_command=True)
+    @verification.group(name="welcome", invoke_without_command=True, case_insensitive=True)
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
     async def verification_welcome(self, ctx):

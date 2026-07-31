@@ -7,9 +7,9 @@ import threading
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Literal
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 from PIL import Image, ImageDraw, ImageFont
 
@@ -39,7 +39,12 @@ BACKFILL_CHANNEL_SLEEP = 1.0  # seconds between channels during backfill
 BAR_WIDTH = 20
 SPARK_GLYPHS = "▁▂▃▄▅▆▇█"
 
-Period = Literal["week", "month", "year", "all"]
+PERIODS = ("week", "month", "year", "all")
+# Explicit choices instead of a Literal converter: discord.py's Literal match
+# is `value == literal` (converter.py:1453), so `.stats top Week` would raise
+# BadLiteralArgument — a plain str keeps the prefix path free for _norm_period
+# to normalize, while this decorator keeps the slash dropdown byte-identical.
+PERIOD_CHOICES = [app_commands.Choice(name=p, value=p) for p in PERIODS]
 
 
 # --- Presentation helpers (module-level, no self needed) --------------------
@@ -511,11 +516,22 @@ class Stats(commands.Cog):
         return dt.astimezone(timezone.utc).strftime("%Y-%m-%d")
 
     @staticmethod
-    def _period_start(period: Period) -> str | None:
+    def _period_start(period: str) -> str | None:
         if period == "all":
             return None
         days = {"week": 7, "month": 30, "year": 365}[period]
         return Stats._day_str(datetime.now(timezone.utc) - timedelta(days=days))
+
+    @staticmethod
+    def _norm_period(period: str) -> str:
+        """Strip + lowercase a period arg so `.stats top Week` matches the
+        same PERIODS the slash choices offer; raises BadArgument on a miss so
+        cog_command_error surfaces a real message instead of a KeyError from
+        _period_start's dict lookup."""
+        normalized = period.strip().lower()
+        if normalized not in PERIODS:
+            raise commands.BadArgument(f"Invalid period `{period}` — use week/month/year/all.")
+        return normalized
 
     @staticmethod
     def _member_label(guild: discord.Guild, user_id: int) -> str:
@@ -770,7 +786,7 @@ class Stats(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     @commands.hybrid_group(
-        invoke_without_command=True, fallback="server",
+        invoke_without_command=True, fallback="server", case_insensitive=True,
         description="Show server-wide message statistics.",
     )
     @commands.guild_only()
@@ -875,9 +891,11 @@ class Stats(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     @stats.command(name="top", description="Show the top message posters.")
+    @app_commands.choices(period=PERIOD_CHOICES)
     @commands.guild_only()
-    async def stats_top(self, ctx, period: Period = "all", n: int = TOP_N):
+    async def stats_top(self, ctx, period: str = "all", n: int = TOP_N):
         """Show the top-n message posters, with % share (period: week/month/year/all)."""
+        period = self._norm_period(period)
         n = max(1, min(n, TOP_N_MAX))
         start_day = self._period_start(period)
         sql = "SELECT user_id, SUM(count) as c FROM messages WHERE guild_id = ?"
@@ -893,9 +911,11 @@ class Stats(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     @stats.command(name="channels", description="Show the busiest channels.")
+    @app_commands.choices(period=PERIOD_CHOICES)
     @commands.guild_only()
-    async def stats_channels(self, ctx, period: Period = "all", n: int = TOP_N):
+    async def stats_channels(self, ctx, period: str = "all", n: int = TOP_N):
         """Show the busiest channels by message count (period: week/month/year/all)."""
+        period = self._norm_period(period)
         n = max(1, min(n, TOP_N_MAX))
         start_day = self._period_start(period)
         sql = "SELECT channel_id, SUM(count) as c FROM messages WHERE guild_id = ?"
@@ -911,9 +931,11 @@ class Stats(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     @stats.command(name="activity", description="Show hour/weekday activity patterns.")
+    @app_commands.choices(period=PERIOD_CHOICES)
     @commands.guild_only()
-    async def stats_activity(self, ctx, period: Period = "month"):
+    async def stats_activity(self, ctx, period: str = "month"):
         """Show peak hour/weekday activity, plus an hour x weekday heatmap image."""
+        period = self._norm_period(period)
         start_day = self._period_start(period)
         # Guild-wide: SUM across all users (no user_id filter), grouped by the
         # (day, hour) pair — weekday is derived from `day` below.
@@ -968,9 +990,11 @@ class Stats(commands.Cog):
             await self._reply(ctx, embed=embed)
 
     @stats.command(name="voice", description="Show the top members by voice time.")
+    @app_commands.choices(period=PERIOD_CHOICES)
     @commands.guild_only()
-    async def stats_voice(self, ctx, period: Period = "all", n: int = TOP_N):
+    async def stats_voice(self, ctx, period: str = "all", n: int = TOP_N):
         """Show the top-n members by voice time (period: week/month/year/all)."""
+        period = self._norm_period(period)
         n = max(1, min(n, TOP_N_MAX))
         start_day = self._period_start(period)
         sql = "SELECT user_id, SUM(seconds) as s FROM voice WHERE guild_id = ?"
@@ -986,10 +1010,12 @@ class Stats(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     @stats.command(name="growth", description="Show member joins/leaves and net growth.")
+    @app_commands.choices(period=PERIOD_CHOICES)
     @commands.guild_only()
-    async def stats_growth(self, ctx, period: Period = "month"):
+    async def stats_growth(self, ctx, period: str = "month"):
         """Show joins/leaves/net member growth alongside message activity for
         the same period (period: week/month/year/all)."""
+        period = self._norm_period(period)
         start_day = self._period_start(period)
         sql = "SELECT COALESCE(SUM(joins),0), COALESCE(SUM(leaves),0) FROM membership WHERE guild_id = ?"
         params = [ctx.guild.id]
@@ -1223,7 +1249,11 @@ class Stats(commands.Cog):
         this server. Destructive and irreversible, so it requires the
         literal argument `confirm` (`.stats reset confirm` /
         `/stats reset confirm:confirm`) — anything else just shows this
-        warning without touching data."""
+        warning without touching data. Unlike the rest of the bot's commands,
+        this token is deliberately case-sensitive: it's a speed bump on an
+        irreversible six-table per-guild wipe, not a case-insensitivity gap
+        to "fix"."""
+        # Deliberately exact-match, not .lower()'d — see the docstring above.
         if confirm != "confirm":
             await self._reply(
                 ctx,

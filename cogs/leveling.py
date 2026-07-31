@@ -295,7 +295,7 @@ class Leveling(commands.Cog):
             await self._save_with_dirty_flag("_dirty", XP_FILE, self._snapshot())
         await ctx.reply(f"✅ Set {member.mention}'s XP to **{amount}** (Level {level_from_xp(amount)}).")
 
-    @commands.group(invoke_without_command=True)
+    @commands.group(invoke_without_command=True, case_insensitive=True)
     @has_permissions_or_owner(manage_guild=True)
     @commands.guild_only()
     async def xpignore(self, ctx):
