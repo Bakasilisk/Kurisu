@@ -1056,7 +1056,7 @@ class Palantir(commands.Cog):
             raise error
 
     @commands.hybrid_group(
-        invoke_without_command=True, fallback="status",
+        invoke_without_command=True, fallback="status", case_insensitive=True,
         description="Show the current palantir surveillance-log configuration.",
     )
     @has_permissions_or_owner(manage_guild=True)

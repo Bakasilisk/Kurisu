@@ -837,7 +837,7 @@ class Cerberus(commands.Cog):
         roles = [r for r in roles if r is not None]
         return "Protected roles: " + (", ".join(r.mention for r in roles) if roles else "None")
 
-    @commands.group(invoke_without_command=True)
+    @commands.group(invoke_without_command=True, case_insensitive=True)
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
     async def cerberus(self, ctx):
@@ -877,7 +877,7 @@ class Cerberus(commands.Cog):
         self._save_config()
         await ctx.reply(f"🐕 Cerberus alerts will be sent to {channel.mention}.")
 
-    @cerberus.group(name="exempt", invoke_without_command=True)
+    @cerberus.group(name="exempt", invoke_without_command=True, case_insensitive=True)
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
     async def cerberus_exempt(self, ctx):
@@ -936,7 +936,7 @@ class Cerberus(commands.Cog):
         guild_conf = self._guild_conf(ctx.guild.id)
         await ctx.reply(embed=await self._exemptions_embed(ctx, guild_conf))
 
-    @cerberus.group(name="protectedrole", invoke_without_command=True)
+    @cerberus.group(name="protectedrole", invoke_without_command=True, case_insensitive=True)
     @commands.has_permissions(manage_guild=True)
     @commands.guild_only()
     async def cerberus_protectedrole(self, ctx):

@@ -135,7 +135,7 @@ class Moderation(commands.Cog):
             pass
 
     @commands.hybrid_group(
-        invoke_without_command=True, fallback="show",
+        invoke_without_command=True, fallback="show", case_insensitive=True,
         description="Show the current mod-log configuration.",
     )
     @app_commands.default_permissions(manage_guild=True)
