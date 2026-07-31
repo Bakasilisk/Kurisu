@@ -135,6 +135,13 @@ class Captions(commands.Cog):
         raise error
 
     def _load_base_image(self, template: Template) -> Image.Image:
+        """Sync, blocking image decode — call via asyncio.to_thread, never directly on
+        the event loop. Cache is per-cog-instance, so a `.cog reload captions` empties
+        it and the next call per template decodes cold; a template already cached by a
+        prior call short-circuits without touching a thread at all. Two concurrent
+        cold calls for the same uncached template can race and decode twice — harmless
+        (both produce an equivalent Image, the dict just ends up with one of them),
+        so no lock is used to prevent it."""
         cached = self._image_cache.get(template.name)
         if cached is not None:
             return cached
@@ -148,13 +155,21 @@ class Captions(commands.Cog):
                 await ctx.reply(f"That text is too long for this bubble (max {MAX_TEXT_LENGTH} characters).")
                 return
 
-        try:
-            base_image = self._load_base_image(template)
-        except (FileNotFoundError, UnidentifiedImageError, OSError):
-            await ctx.reply("This template's image is missing or unreadable — let the bot owner know.")
-            return
+        # Acknowledge the interaction before the slow work below. The base-image decode
+        # (cold on every cache miss, e.g. right after a reload) and the render are both
+        # blocking Pillow calls, and together they can eat into or blow Discord's 3s
+        # interaction-response budget — confirmed in production as a 10062 "Unknown
+        # interaction" on this exact command. Non-ephemeral: captions are a deliberate
+        # public-reply exception (see below), so the eventual followup must stay public.
+        async with ctx.typing():
+            try:
+                base_image = await asyncio.to_thread(self._load_base_image, template)
+            except (FileNotFoundError, UnidentifiedImageError, OSError):
+                await ctx.reply("This template's image is missing or unreadable — let the bot owner know.")
+                return
 
-        buffer = await asyncio.to_thread(_render, base_image, template, texts)
+            buffer = await asyncio.to_thread(_render, base_image, template, texts)
+
         file = discord.File(buffer, filename=f"{template.name}.png")
         # Deliberately not using reply_ephemeral_aware — captions are meant to be seen
         # by the channel, not just the invoker, for both . and / invocations. This is an
