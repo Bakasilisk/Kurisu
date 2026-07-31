@@ -375,10 +375,33 @@ class Moderation(commands.Cog):
             except discord.NotFound:
                 pass
 
-        deleted = await ctx.channel.purge(limit=amount, check=check)
-        confirmation = await self._reply(ctx, f"🧹 Deleted {len(deleted)} message(s).")
-        if not ephemeral:
-            await confirmation.delete(delay=5)
+        # Discord can't bulk-delete messages older than 14 days, so channel.purge falls
+        # back to deleting those one at a time under rate limiting — amount=100 can take
+        # minutes. For a slash invocation this is the initial interaction response, and
+        # Discord kills an un-acknowledged interaction token after 3s (10062 "Unknown
+        # interaction"). Defer now, ephemeral to match the confirmation reply below so
+        # the eventual followup's visibility doesn't flip on the user. ctx.typing() is a
+        # no-op defer on a prefix invocation (Context.interaction is None there).
+        async with ctx.typing(ephemeral=True):
+            deleted = await ctx.channel.purge(limit=amount, check=check)
+
+        # The confirmation is best-effort UX; the audit trail below must land regardless
+        # of whether it does, so any failure sending/deleting it is swallowed here rather
+        # than allowed to propagate and skip _log_action.
+        try:
+            if ephemeral:
+                confirmation = await self._reply(ctx, f"🧹 Deleted {len(deleted)} message(s).")
+            else:
+                # Not ctx.reply/self._reply: those reference ctx.message, which we just
+                # deleted above. Context.reply's message reference only carries
+                # message_id/channel_id/guild_id (no fail_if_not_exists), so Discord's
+                # API default of fail_if_not_exists=true makes referencing a deleted
+                # message raise HTTP 400. Send a plain, unreferenced message instead.
+                confirmation = await ctx.send(f"🧹 Deleted {len(deleted)} message(s).")
+                await confirmation.delete(delay=5)
+        except discord.HTTPException:
+            logger.exception("purge: failed to send or delete the confirmation message")
+
         await self._log_action(
             ctx, "Messages Purged", discord.Color.blue(),
             **{
