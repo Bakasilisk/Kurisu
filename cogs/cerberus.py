@@ -54,6 +54,21 @@ DUP_CONTENT_WINDOW_SECONDS = 60
 RAID_WAVE_MIN_ACCOUNTS = 2
 RAID_WAVE_WINDOW_SECONDS = 60
 
+# Once a wave trigger (duplicate-content flood or a Pattern-A raid wave) fires
+# for a guild, suppress repeat wave escalation — the alert, the
+# trigger_timestamps append, and the config save — for this long. Without
+# this, every single message sharing a hot content hash (or every subsequent
+# Pattern-A tripper) re-enters the escalation path individually: in shadow
+# mode that's a duplicate "Lockdown [SHADOW MODE]" alert plus a blocking
+# config save per message; in active mode it's the same duplicate save even
+# though _start_lockdown itself short-circuits once active. Sized to match
+# DUP_CONTENT_WINDOW_SECONDS/RAID_WAVE_WINDOW_SECONDS: long enough to collapse
+# one incident's burst into a single trigger, short enough that a raid still
+# ongoing a minute later gets a fresh trigger_timestamps entry rather than
+# going silent (that entry is what LOCKDOWN_REPEAT_WINDOW_SECONDS/stay_locked
+# below uses to detect a genuinely ongoing/repeat attack).
+WAVE_TRIGGER_COOLDOWN_SECONDS = 60
+
 # A repeat wave trigger within this window (of a prior one) signals an ongoing
 # raid rather than a one-off, consumed by the lockdown mechanism (later step).
 LOCKDOWN_REPEAT_WINDOW_SECONDS = 60 * 60
@@ -191,6 +206,11 @@ class Cerberus(commands.Cog):
         self._actioned_members: dict[tuple[int, int], float] = {}
         self._content_hash_activity: dict[tuple[int, str], deque] = {}
         self._pattern_a_trips: dict[int, deque] = {}
+        # Last time a wave trigger (duplicate-content flood or Pattern-A raid
+        # wave) escalated for a guild (monotonic time), so a raid that keeps
+        # posting doesn't re-alert/re-save/re-invoke _start_lockdown on every
+        # single message — see WAVE_TRIGGER_COOLDOWN_SECONDS.
+        self._last_wave_trigger: dict[int, float] = {}
         # Pending auto-lift tasks for active lockdowns, keyed by guild ID. Not
         # cancelled on cog_unload (see cog_unload docstring) — they close over
         # `self` and keep working correctly across a bare extension reload.
@@ -367,34 +387,63 @@ class Cerberus(commands.Cog):
     async def _trigger_raid_wave(self, guild, involved_member_ids, reason, *, events_by_author):
         """Common entry point for both wave triggers (repeated Pattern A trips,
         and the duplicate-content check). Responds to any involved member not
-        already actioned, then escalates to a (stubbed) lockdown."""
+        already actioned, and escalates to a lockdown — the two run
+        concurrently so the guild-wide lockdown (the thing that actually stops
+        the flood) doesn't wait on a full round of sequential per-member
+        timeout/delete/alert API calls first."""
         now = time.monotonic()
-        for member_id in involved_member_ids:
-            key = (guild.id, member_id)
-            last_actioned = self._actioned_members.get(key)
-            if last_actioned is not None and now - last_actioned < ACTION_REARM_SECONDS:
-                continue
-            member = guild.get_member(member_id)
-            if member is None:
-                continue
-            events = (events_by_author or {}).get(member_id) or list(
-                self._member_activity.get(key, ())
-            )
-            if not events:
-                continue
-            self._actioned_members[key] = now
-            await self._respond_to_member(guild, member, events, reason=reason, role_pinged=None)
 
-        guild_conf = self._guild_conf(guild.id)
-        lockdown = guild_conf["lockdown"]
-        now_epoch = time.time()
-        lockdown["trigger_timestamps"].append(now_epoch)
-        lockdown["trigger_timestamps"] = [
-            t for t in lockdown["trigger_timestamps"] if now_epoch - t <= LOCKDOWN_REPEAT_WINDOW_SECONDS
-        ]
-        self._save_config()
+        async def _respond_to_members():
+            for member_id in involved_member_ids:
+                key = (guild.id, member_id)
+                last_actioned = self._actioned_members.get(key)
+                if last_actioned is not None and now - last_actioned < ACTION_REARM_SECONDS:
+                    continue
+                member = guild.get_member(member_id)
+                if member is None:
+                    continue
+                events = (events_by_author or {}).get(member_id) or list(
+                    self._member_activity.get(key, ())
+                )
+                if not events:
+                    continue
+                self._actioned_members[key] = now
+                await self._respond_to_member(guild, member, events, reason=reason, role_pinged=None)
 
-        await self._start_lockdown(guild, reason)
+        async def _escalate_lockdown():
+            # Debounce: once a wave has escalated for this guild, don't repeat
+            # the alert/append/save/_start_lockdown call for every subsequent
+            # message of the same incident (see WAVE_TRIGGER_COOLDOWN_SECONDS).
+            last_trigger = self._last_wave_trigger.get(guild.id)
+            if last_trigger is not None and now - last_trigger < WAVE_TRIGGER_COOLDOWN_SECONDS:
+                return
+            self._last_wave_trigger[guild.id] = now
+
+            guild_conf = self._guild_conf(guild.id)
+            lockdown = guild_conf["lockdown"]
+            now_epoch = time.time()
+            lockdown["trigger_timestamps"].append(now_epoch)
+            lockdown["trigger_timestamps"] = [
+                t for t in lockdown["trigger_timestamps"]
+                if now_epoch - t <= LOCKDOWN_REPEAT_WINDOW_SECONDS
+            ]
+            self._save_config()
+
+            await self._start_lockdown(guild, reason)
+
+        # return_exceptions=True: an exception responding to one member (or in
+        # the lockdown escalation) must not silently abort the other path —
+        # each is independently important (per-member enforcement vs. the
+        # guild-wide stop-the-flood lockdown), so a failure in one is logged
+        # loudly rather than swallowing/cancelling both.
+        results = await asyncio.gather(
+            _respond_to_members(), _escalate_lockdown(), return_exceptions=True
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.error(
+                    "Cerberus: error handling raid wave for guild %s", guild.id, exc_info=result
+                )
 
     async def _rehydrate_lockdowns(self):
         """Resume any lockdown that was still active when the bot last stopped,
@@ -435,6 +484,18 @@ class Cerberus(commands.Cog):
             if guild_conf["mode"] == "shadow":
                 await self._send_lockdown_alert(guild, reason, stay_locked=False, shadow=True)
                 return
+
+            # Captured now, before the asyncio.gather below has a chance to
+            # yield control: _trigger_raid_wave appends to
+            # trigger_timestamps *outside* self._lockdown_locks, so messages
+            # for this same guild arriving while the gather is in flight could
+            # otherwise keep appending to the live list. Reading the count
+            # after the gather would let those in-flight appends inflate it
+            # and incorrectly flip a first-incident lockdown into a permanent
+            # (stay_locked) one. lockdown["trigger_timestamps"] here already
+            # includes the current incident's own just-appended timestamp
+            # (appended by _trigger_raid_wave before it called us).
+            prior_trigger_count = len(lockdown["trigger_timestamps"])
 
             protected_roles = [guild.get_role(rid) for rid in guild_conf["protected_role_ids"]]
             protected_roles = [r for r in protected_roles if r is not None]
@@ -499,8 +560,10 @@ class Cerberus(commands.Cog):
             # not a one-off — stay locked until a mod manually lifts it instead of
             # auto-lifting into what might still be an active attack. Persisted as
             # expires_at=None so a restart holds the lockdown too instead of
-            # rehydrating it into an auto-lifting one.
-            stay_locked = len(lockdown["trigger_timestamps"]) > 1
+            # rehydrating it into an auto-lifting one. Uses the count captured
+            # before the gather (see above), not the possibly-since-mutated
+            # live list.
+            stay_locked = prior_trigger_count > 1
 
             # Always persist whatever succeeded, even if some channels failed —
             # a partially-applied lockdown must still be fully restorable.
