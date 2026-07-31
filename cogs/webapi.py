@@ -5,7 +5,6 @@ import os
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Literal
 
 from aiohttp import web
 from discord.ext import commands
@@ -21,8 +20,10 @@ logger = logging.getLogger(__name__)
 # no cog_enabled/.feature toggle, matches management/help's "infra" carve-out.
 STATS_DB = os.environ.get("STATS_DB_PATH") or data_path("stats.db")
 
-Period = Literal["week", "month", "year", "all"]
+# Single in-module source of truth for the period vocabulary (mirrors
+# cogs/stats.py's pair by convention, never by import — see below).
 _PERIOD_DAYS = {"week": 7, "month": 30, "year": 365}
+PERIODS = (*_PERIOD_DAYS, "all")
 # Mirrors cogs/stats.py's TREND_PERIOD_DAYS, kept as its own constant rather
 # than imported so this cog has zero import-time coupling to cogs/stats.py.
 TREND_PERIOD_DAYS = 30
@@ -229,7 +230,7 @@ class WebAPI(commands.Cog):
         # Lowercased to match stats' now-case-insensitive period arg; falls
         # back to `default` silently on a miss, same as before.
         period = request.query.get("period", default).lower()
-        return period if period in ("week", "month", "year", "all") else default
+        return period if period in PERIODS else default
 
     @staticmethod
     def _limit_param(request: web.Request) -> int | None:

@@ -27,15 +27,28 @@ def _discover_cogs() -> dict[str, str]:
     return cogs
 
 
-def _to_extension(name: str) -> str:
-    """Normalize user input ("moderation" or "cogs.moderation") to an extension name."""
-    name = name.strip().lower()
-    return name if name.startswith("cogs.") else f"cogs.{name}"
+def _resolve_ci(name: str, candidates) -> str | None:
+    """Case-insensitive lookup among canonical names; returns the canonical
+    casing on a hit, None on a miss. Canonical names come from filenames and
+    extension loading is case-sensitive on this filesystem, so user input must
+    resolve to the on-disk casing — not get blanket-lowercased and hope."""
+    return {c.lower(): c for c in candidates}.get(name.strip().lower())
 
 
 def _to_short_name(name: str) -> str:
-    """Normalize user input ("moderation" or "cogs.moderation") to a short cog name."""
-    return name.strip().lower().removeprefix("cogs.")
+    """Normalize user input ("Moderation" or "cogs.Moderation") to a short cog
+    name, resolved case-insensitively against the cogs on disk; unknown names
+    fall back to the lowercased input (for error messages and membership
+    checks, which then miss exactly as they should)."""
+    short = name.strip()
+    if short.lower().startswith("cogs."):
+        short = short[len("cogs."):]
+    return _resolve_ci(short, _discover_cogs()) or short.lower()
+
+
+def _to_extension(name: str) -> str:
+    """Normalize user input ("moderation" or "cogs.moderation") to an extension name."""
+    return f"cogs.{_to_short_name(name)}"
 
 
 def _default_config() -> dict:
@@ -470,10 +483,13 @@ class Management(commands.Cog):
     @app_commands.autocomplete(name=_disabled_feature_autocomplete)
     async def feature_enable(self, ctx, name: str):
         """Enable a cog's behavior in this server."""
-        name = _to_short_name(name)
-        if name not in self._toggleable_names():
-            await self._reply(ctx, embed=self._embed(f"`{name}` isn't a toggleable feature."))
+        # Feature names are short-names-only (no "cogs." grammar), matched
+        # case-insensitively against the toggleable set.
+        resolved = _resolve_ci(name, self._toggleable_names())
+        if resolved is None:
+            await self._reply(ctx, embed=self._embed(f"`{name.strip()}` isn't a toggleable feature."))
             return
+        name = resolved
         guild_conf = self._guild_conf(ctx.guild.id)
         _toggle_membership(guild_conf["disabled_cogs"], name, present=False)
         self._save()
@@ -485,10 +501,11 @@ class Management(commands.Cog):
     @app_commands.autocomplete(name=_enabled_feature_autocomplete)
     async def feature_disable(self, ctx, name: str):
         """Disable a cog's behavior in this server."""
-        name = _to_short_name(name)
-        if name not in self._toggleable_names():
-            await self._reply(ctx, embed=self._embed(f"`{name}` isn't a toggleable feature."))
+        resolved = _resolve_ci(name, self._toggleable_names())
+        if resolved is None:
+            await self._reply(ctx, embed=self._embed(f"`{name.strip()}` isn't a toggleable feature."))
             return
+        name = resolved
         guild_conf = self._guild_conf(ctx.guild.id)
         _toggle_membership(guild_conf["disabled_cogs"], name, present=True)
         self._save()

@@ -39,12 +39,42 @@ BACKFILL_CHANNEL_SLEEP = 1.0  # seconds between channels during backfill
 BAR_WIDTH = 20
 SPARK_GLYPHS = "▁▂▃▄▅▆▇█"
 
-PERIODS = ("week", "month", "year", "all")
-# Explicit choices instead of a Literal converter: discord.py's Literal match
-# is `value == literal` (converter.py:1453), so `.stats top Week` would raise
-# BadLiteralArgument — a plain str keeps the prefix path free for _norm_period
-# to normalize, while this decorator keeps the slash dropdown byte-identical.
-PERIOD_CHOICES = [app_commands.Choice(name=p, value=p) for p in PERIODS]
+# Single source of truth for the period vocabulary: window lengths live here,
+# PERIODS (and the converter's choices/error text) are derived from it.
+_PERIOD_DAYS = {"week": 7, "month": 30, "year": 365}
+PERIODS = (*_PERIOD_DAYS, "all")
+
+
+class PeriodConverter(commands.Converter, app_commands.Transformer):
+    """One self-enforcing period argument for both command paths. Not a
+    Literal: discord.py's Literal match is `value == literal`
+    (converter.py:1453), so `.stats top Week` would raise BadLiteralArgument.
+    Annotating a param with this class gives the prefix path case-insensitive
+    conversion (BadArgument on a miss, surfaced by cog_command_error) and the
+    slash path the same values as a dropdown via `choices` — a new subcommand
+    only annotates the parameter, there is no separate normalization call to
+    forget (hybrid.py passes Transformer annotations through as-is)."""
+
+    @property
+    def choices(self) -> list[app_commands.Choice[str]]:
+        return [app_commands.Choice(name=p, value=p) for p in PERIODS]
+
+    async def convert(self, ctx, argument: str) -> str:
+        return self._validate(argument)
+
+    async def transform(self, interaction, value: str) -> str:
+        return self._validate(value)
+
+    @staticmethod
+    def _validate(raw: str) -> str:
+        normalized = raw.strip().lower()
+        if normalized not in PERIODS:
+            # Static message, no raw-input interpolation: cog_command_error
+            # echoes BadArgument text publicly, so reflecting the argument
+            # would let any member bounce mentions/markdown off the bot
+            # (same rule as moderation.parse_duration).
+            raise commands.BadArgument(f"Period must be one of {', '.join(PERIODS)}.")
+        return normalized
 
 
 # --- Presentation helpers (module-level, no self needed) --------------------
@@ -519,19 +549,7 @@ class Stats(commands.Cog):
     def _period_start(period: str) -> str | None:
         if period == "all":
             return None
-        days = {"week": 7, "month": 30, "year": 365}[period]
-        return Stats._day_str(datetime.now(timezone.utc) - timedelta(days=days))
-
-    @staticmethod
-    def _norm_period(period: str) -> str:
-        """Strip + lowercase a period arg so `.stats top Week` matches the
-        same PERIODS the slash choices offer; raises BadArgument on a miss so
-        cog_command_error surfaces a real message instead of a KeyError from
-        _period_start's dict lookup."""
-        normalized = period.strip().lower()
-        if normalized not in PERIODS:
-            raise commands.BadArgument(f"Invalid period `{period}` — use week/month/year/all.")
-        return normalized
+        return Stats._day_str(datetime.now(timezone.utc) - timedelta(days=_PERIOD_DAYS[period]))
 
     @staticmethod
     def _member_label(guild: discord.Guild, user_id: int) -> str:
@@ -891,11 +909,9 @@ class Stats(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     @stats.command(name="top", description="Show the top message posters.")
-    @app_commands.choices(period=PERIOD_CHOICES)
     @commands.guild_only()
-    async def stats_top(self, ctx, period: str = "all", n: int = TOP_N):
+    async def stats_top(self, ctx, period: PeriodConverter = "all", n: int = TOP_N):
         """Show the top-n message posters, with % share (period: week/month/year/all)."""
-        period = self._norm_period(period)
         n = max(1, min(n, TOP_N_MAX))
         start_day = self._period_start(period)
         sql = "SELECT user_id, SUM(count) as c FROM messages WHERE guild_id = ?"
@@ -911,11 +927,9 @@ class Stats(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     @stats.command(name="channels", description="Show the busiest channels.")
-    @app_commands.choices(period=PERIOD_CHOICES)
     @commands.guild_only()
-    async def stats_channels(self, ctx, period: str = "all", n: int = TOP_N):
+    async def stats_channels(self, ctx, period: PeriodConverter = "all", n: int = TOP_N):
         """Show the busiest channels by message count (period: week/month/year/all)."""
-        period = self._norm_period(period)
         n = max(1, min(n, TOP_N_MAX))
         start_day = self._period_start(period)
         sql = "SELECT channel_id, SUM(count) as c FROM messages WHERE guild_id = ?"
@@ -931,11 +945,9 @@ class Stats(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     @stats.command(name="activity", description="Show hour/weekday activity patterns.")
-    @app_commands.choices(period=PERIOD_CHOICES)
     @commands.guild_only()
-    async def stats_activity(self, ctx, period: str = "month"):
+    async def stats_activity(self, ctx, period: PeriodConverter = "month"):
         """Show peak hour/weekday activity, plus an hour x weekday heatmap image."""
-        period = self._norm_period(period)
         start_day = self._period_start(period)
         # Guild-wide: SUM across all users (no user_id filter), grouped by the
         # (day, hour) pair — weekday is derived from `day` below.
@@ -990,11 +1002,9 @@ class Stats(commands.Cog):
             await self._reply(ctx, embed=embed)
 
     @stats.command(name="voice", description="Show the top members by voice time.")
-    @app_commands.choices(period=PERIOD_CHOICES)
     @commands.guild_only()
-    async def stats_voice(self, ctx, period: str = "all", n: int = TOP_N):
+    async def stats_voice(self, ctx, period: PeriodConverter = "all", n: int = TOP_N):
         """Show the top-n members by voice time (period: week/month/year/all)."""
-        period = self._norm_period(period)
         n = max(1, min(n, TOP_N_MAX))
         start_day = self._period_start(period)
         sql = "SELECT user_id, SUM(seconds) as s FROM voice WHERE guild_id = ?"
@@ -1010,12 +1020,10 @@ class Stats(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     @stats.command(name="growth", description="Show member joins/leaves and net growth.")
-    @app_commands.choices(period=PERIOD_CHOICES)
     @commands.guild_only()
-    async def stats_growth(self, ctx, period: str = "month"):
+    async def stats_growth(self, ctx, period: PeriodConverter = "month"):
         """Show joins/leaves/net member growth alongside message activity for
         the same period (period: week/month/year/all)."""
-        period = self._norm_period(period)
         start_day = self._period_start(period)
         sql = "SELECT COALESCE(SUM(joins),0), COALESCE(SUM(leaves),0) FROM membership WHERE guild_id = ?"
         params = [ctx.guild.id]
