@@ -327,6 +327,16 @@ Both take the rest of the message as the title, so multi-word titles need no quo
 episode/chapter count, status, genres, and cover art. Adult titles have their cover hidden outside
 age-restricted channels. No API key needed — AniList's GraphQL API is public and unauthenticated.
 
+### Summary
+
+`.summary` — Manage Server (bot owner bypasses the check) — summarizes the current channel's last
+2 hours or last 100 messages, whichever is smaller. Bot messages are skipped; the summary is
+written in whatever language the conversation was in. Powered by Anthropic's `claude-opus-5`;
+requires `ANTHROPIC_API_KEY` in `.env` — without it, the command replies that it isn't configured
+instead of running. Only one summary can run per channel at a time, plus a 60-second per-channel
+cooldown. Can be disabled per server with `.feature disable summary`. Note: invoking it sends the
+channel's recent content to the Anthropic API, and each call costs a few cents.
+
 ### Reminders
 
 | Command | Does |

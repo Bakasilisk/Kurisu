@@ -68,6 +68,7 @@ INITIAL_EXTENSIONS = [
     "cogs.aidetect",
     "cogs.trace",
     "cogs.anilist",
+    "cogs.summary",
     "cogs.reminders",
     "cogs.webapi",
 ]
