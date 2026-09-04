@@ -21,9 +21,7 @@ MAX_MESSAGE_CHARS = 500
 MAX_TOKENS = 6000
 API_TIMEOUT_SECONDS = 60.0
 COOLDOWN_SECONDS = 60
-# 3/4 of Discord's 4096 embed-description cap; SYSTEM_PROMPT asks for ~2600
-# chars, so hitting this truncation is the exception, not the rule.
-SUMMARY_CHAR_LIMIT = 3072
+EMBED_DESC_LIMIT = 4096
 # Defensive cap on the whole transcript, independent of MESSAGE_LIMIT *
 # MAX_MESSAGE_CHARS — a belt-and-suspenders guard against an unexpectedly
 # long request, not something normal usage should ever hit.
@@ -66,7 +64,7 @@ Reply in the same language the conversation is written in. If the conversation
 mixes languages, reply in whichever language is dominant.
 
 Output only the summary itself — no preamble, no restating these instructions,
-no "Here is a summary of...". Keep the entire response under 2600 characters."""
+no "Here is a summary of...". Keep the entire response under 3500 characters."""
 
 
 def _attachment_marker(attachment: discord.Attachment) -> str:
@@ -165,8 +163,8 @@ class Summary(commands.Cog):
     @staticmethod
     def _build_embed(text: str, count: int) -> discord.Embed:
         description = text
-        if len(description) > SUMMARY_CHAR_LIMIT:
-            description = description[: SUMMARY_CHAR_LIMIT - 1].rstrip() + "…"
+        if len(description) > EMBED_DESC_LIMIT:
+            description = description[: EMBED_DESC_LIMIT - 1].rstrip() + "…"
 
         # discord.Embed never renders description text as a live @everyone/@role/@user
         # ping regardless of content, so an injected mention in the model's output
