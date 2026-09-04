@@ -36,6 +36,9 @@ palantir_attachments/
 # Reminders data
 reminders.json
 
+# Tickets data
+tickets.json
+
 # Stats data
 stats.db
 stats.db-wal

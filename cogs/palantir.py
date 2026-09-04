@@ -31,7 +31,7 @@ ARCHIVE_MAX_BYTES = 8 * 1024 * 1024
 # well under Discord's per-field character limit.
 BULK_DELETE_SAMPLE_LIMIT = 10
 
-CATEGORIES = ("members", "messages", "roles", "voice", "modactions", "invites", "server")
+CATEGORIES = ("members", "messages", "roles", "voice", "modactions", "invites", "server", "tickets")
 
 CATEGORY_COLORS = {
     "members": discord.Color.blue(),
@@ -41,6 +41,7 @@ CATEGORY_COLORS = {
     "modactions": discord.Color.red(),
     "invites": discord.Color.green(),
     "server": discord.Color.dark_grey(),
+    "tickets": discord.Color.gold(),
 }
 
 
@@ -186,6 +187,10 @@ class Palantir(commands.Cog):
                 await channel.send(embed=embed)
         except discord.Forbidden:
             pass
+
+    async def log_event(self, guild: discord.Guild, category: str, embed: discord.Embed) -> None:
+        """Public entry point for other cogs (tickets) — same cog/category/channel guards as the listeners."""
+        await self._log(guild, category, embed)
 
     # --- Message-content cache -----------------------------------------------
 
@@ -1104,7 +1109,7 @@ class Palantir(commands.Cog):
     @commands.guild_only()
     async def palantir_mute(self, ctx, category: str):
         """Stop logging a category of events (members, messages, roles, voice,
-        modactions, invites, server)."""
+        modactions, invites, server, tickets)."""
         category = category.lower()
         if category not in CATEGORIES:
             await self._reply(ctx, f"Unknown category. Choose from: {', '.join(CATEGORIES)}")

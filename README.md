@@ -20,6 +20,7 @@ local SQLite database (`stats.db`) for server statistics. Command prefix is `.`.
   [AniList](#anilist) ·
   [Summary](#summary) ·
   [Reminders](#reminders) ·
+  [Tickets](#tickets) ·
   [Web API](#web-api) ·
   [Help](#help) ·
   [Management](#management) ·
@@ -29,8 +30,8 @@ local SQLite database (`stats.db`) for server statistics. Command prefix is `.`.
 
 ## Features
 
-Moderation, palantir, management, help, captions, aidetect, trace, anilist, reminders, and stats
-commands are also available as `/` slash commands with autocomplete descriptions; slash invocations
+Moderation, palantir, management, help, captions, aidetect, trace, anilist, reminders, tickets,
+and stats commands are also available as `/` slash commands with autocomplete descriptions; slash invocations
 reply ephemerally (visible only to the invoker) while `.` invocations reply publicly — except
 captions, aidetect, trace, and anilist, whose results always reply publicly regardless of
 invocation method.
@@ -233,6 +234,7 @@ categories:
 | `modactions` | Ban/kick/timeout and moderator role grants, attributed via audit log |
 | `invites` | Invite created/deleted |
 | `server` | Channel create/delete/edit, emoji changes, server settings |
+| `tickets` | Ticket opened, mod reply, user follow-up, closed — names the replying moderator |
 
 - Message edits/deletes show the pre-change content from palantir's own disk-backed cache,
   capped at 20,000 messages and 14 days per server, oldest evicted/expired automatically —
@@ -352,6 +354,42 @@ fires — late by more than two minutes, it's delivered with an apology — chec
 tick, so delivery can lag up to that long. Durations can't exceed 90 days; each member can have
 at most 10 pending reminders at once.
 
+### Tickets
+
+| Command | Does | Requires |
+|---|---|---|
+| `ticket open <text>` | Open a new ticket | — |
+| `ticket reply <id> <text>` | Reply to a ticket | Manage Messages in the server, or the ticket's owner in a DM with the bot |
+| `ticket close <id> [reason]` | Close a ticket | Manage Messages, or the ticket's owner |
+| `ticket list` | List open tickets | Manage Messages |
+| `ticket show <id>` | Show a ticket's transcript | Manage Messages |
+| `ticket channel` / `ticket channel set #channel` / `ticket channel disable` | Show/set/disable the ticket channel | Manage Server |
+
+A member opens a ticket and the conversation continues by DM: mod replies always reach the
+user as an anonymous "Reply from the mod team" — no mod name, avatar, or mention. The ticket
+channel, the palantir `tickets` category, and `logs/kurisu.log` still record which moderator
+replied, so the audit trail survives even if palantir's log is muted. The palantir log channel
+can be visible to more people than the ticket channel itself, so choose its visibility
+deliberately if that distinction matters to you.
+
+Mod subcommands (`reply`, `close`, `list`, `show`) run with the `.` prefix are only accepted
+inside the configured ticket channel, since a prefix invocation leaves the command (and the
+mod's name) visible in whatever channel it was typed in; the `/` version works anywhere and
+always replies privately. The `channel …` config commands have no such restriction. Opening a ticket is the same either way: `/ticket open` keeps the request private,
+`.ticket open` posts it (and its echo) in the channel it's run in.
+
+Once a ticket is open, plain DMs to the bot are automatically forwarded into it — no command
+needed. A member with open tickets on several servers instead uses
+`.ticket reply <id> <text>` in the DM to pick which one. Attachments on both ticket messages
+and DMs are downloaded and re-uploaded into the ticket channel (up to 8 MB) rather than stored
+as links, since Discord's CDN URLs expire. The user must allow direct messages from server
+members, or replies can't reach them — the bot warns about this when a ticket is opened.
+
+Limits: one open ticket per member per server, 1500 characters per message, 200 messages per
+ticket, and one DM every 5 seconds. Closed tickets are kept for 30 days, after which they no
+longer show up in `ticket show`. Like other cogs, tickets can be disabled per server with
+`.feature disable tickets`.
+
 ### Help
 
 `.help` / `/help` lists the cogs you have any usable command in. `.help <cog>` /
@@ -452,6 +490,7 @@ manual setup needed:
 | `palantir.json`, `palantir_messages.json` | Palantir config, message cache |
 | `management.json` | Unloaded extensions, per-guild feature toggles |
 | `reminders.json` | Pending reminders |
+| `tickets.json` | Ticket channel per server, open/closed tickets with transcripts |
 | `stats.db` | Server statistics (SQLite — the one non-JSON data file) |
 
 Palantir additionally stores archived attachment bytes under `palantir_attachments/` when
