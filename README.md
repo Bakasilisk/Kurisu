@@ -18,6 +18,7 @@ local SQLite database (`stats.db`) for server statistics. Command prefix is `.`.
   [AI Detect](#ai-detect) ·
   [Trace Anime](#trace-anime) ·
   [AniList](#anilist) ·
+  [Summary](#summary) ·
   [Reminders](#reminders) ·
   [Web API](#web-api) ·
   [Help](#help) ·
