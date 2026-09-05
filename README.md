@@ -30,11 +30,13 @@ local SQLite database (`stats.db`) for server statistics. Command prefix is `.`.
 
 ## Features
 
-Moderation, palantir, management, help, captions, aidetect, trace, anilist, reminders, tickets,
-and stats commands are also available as `/` slash commands with autocomplete descriptions; slash invocations
-reply ephemerally (visible only to the invoker) while `.` invocations reply publicly — except
-captions, aidetect, trace, and anilist, whose results always reply publicly regardless of
-invocation method.
+Moderation, palantir, management, help, captions, aidetect, trace, anilist, summary, reminders,
+tickets, and stats commands are also available as `/` slash commands with autocomplete
+descriptions; slash invocations reply ephemerally (visible only to the invoker) while `.`
+invocations reply publicly — except captions, aidetect, trace, and anilist, whose results always
+reply publicly regardless of invocation method. Summary is also the one command where `/` and `.`
+differ in *who* may run it, not just visibility: `/summary` is open to everyone, while `.summary`
+requires Manage Server (or the bot owner) — see [Summary](#summary).
 The economy sinks (`slots`) are prefix-only and public, matching the rest of the economy
 cog. The other cogs are prefix-only.
 
@@ -332,13 +334,20 @@ age-restricted channels. No API key needed — AniList's GraphQL API is public a
 
 ### Summary
 
-`.summary` — Manage Server (bot owner bypasses the check) — summarizes the current channel's last
-2 hours or last 100 messages, whichever is smaller. Bot messages are skipped; the summary is
-written in whatever language the conversation was in. Powered by Anthropic's `claude-opus-5`;
-requires `ANTHROPIC_API_KEY` in `.env` — without it, the command replies that it isn't configured
-instead of running. Only one summary can run per channel at a time, plus a 60-second per-channel
-cooldown. Can be disabled per server with `.feature disable summary`. Note: invoking it sends the
-channel's recent content to the Anthropic API, and each call costs a few cents.
+`/summary` is open to every member and replies privately (only you see it); `.summary` stays
+Manage Server / bot owner only and replies publicly in the channel. Either way it summarizes the
+current channel's last 2 hours or last 100 messages, whichever is smaller — bot messages are
+skipped, and the summary is written in whatever language the conversation was in. Powered by
+Anthropic's `claude-opus-5`; requires `ANTHROPIC_API_KEY` in `.env` — without it, the command
+replies that it isn't configured instead of running.
+
+Non-exempt members (everyone but Manage Server/bot owner, who have no limit) are capped at 1
+summary per 12 hours and a server-wide 10 per 24 hours, both rolling windows rather than a
+fixed reset time; a failed Anthropic call never counts against either. The embed's footer shows
+usage as `N/10 (24h)` for non-exempt runs. Only one summary can run per channel at a time, plus a
+60-second per-channel cooldown. Can be disabled per server with `.feature disable summary`. Note:
+invoking it sends the channel's recent content to the Anthropic API, and each call costs a few
+cents.
 
 ### Reminders
 

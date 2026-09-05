@@ -4,7 +4,14 @@ import time
 import discord
 from discord.ext import commands
 
-from .management import cog_enabled, common_error_reply, has_permissions_or_owner, rank_of, require_outranks
+from .management import (
+    cog_enabled,
+    common_error_reply,
+    format_cooldown,
+    has_permissions_or_owner,
+    rank_of,
+    require_outranks,
+)
 from .storage import data_path, load_json, save_json_atomic
 
 ECONOMY_FILE = data_path("economy.json")
@@ -27,16 +34,6 @@ PAYDAY_STREAK_BONUS = 25          # per consecutive day beyond the first
 PAYDAY_STREAK_CAP = 7             # bonus stops growing (max 250/day)
 PAYDAY_COOLDOWN_SECONDS = 20 * 60 * 60
 PAYDAY_STREAK_WINDOW_SECONDS = 48 * 60 * 60
-
-
-def _format_cooldown(seconds) -> str:
-    total_minutes = max(1, int(seconds) // 60)
-    hours, minutes = divmod(total_minutes, 60)
-    if hours and minutes:
-        return f"{hours}h {minutes}m"
-    if hours:
-        return f"{hours}h"
-    return f"{minutes}m"
 
 
 class Economy(commands.Cog):
@@ -93,7 +90,7 @@ class Economy(commands.Cog):
         remaining = PAYDAY_COOLDOWN_SECONDS - (now - entry["last_payday"])
         if remaining > 0:
             await ctx.reply(
-                f"⏳ You've already collected your payday. Try again in {_format_cooldown(remaining)}."
+                f"⏳ You've already collected your payday. Try again in {format_cooldown(remaining)}."
             )
             return
 

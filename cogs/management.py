@@ -126,6 +126,17 @@ def rank_of(items, key, target_id) -> int | None:
     return None
 
 
+def format_cooldown(seconds) -> str:
+    """Human-readable remaining cooldown, e.g. '2h 15m' — shared by economy and summary."""
+    total_minutes = max(1, int(seconds) // 60)
+    hours, minutes = divmod(total_minutes, 60)
+    if hours and minutes:
+        return f"{hours}h {minutes}m"
+    if hours:
+        return f"{hours}h"
+    return f"{minutes}m"
+
+
 async def reply_ephemeral_aware(ctx, *args, **kwargs):
     """ctx.reply, but ephemeral (visible only to the invoker) when the command was
     invoked via / rather than the text prefix."""

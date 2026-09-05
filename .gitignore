@@ -19,6 +19,9 @@ leveling_exclude.json
 # Economy data
 economy.json
 
+# Summary data
+summary.json
+
 # Cerberus data
 cerberus.json
 
