@@ -1,10 +1,10 @@
 # Kurisu Web API Specification
 
-Reference for applications consuming the bot's read-only HTTP/JSON API (the `webapi` cog, `cogs/webapi.py`). The canonical consumer is the [kurisu-web](https://github.com/Bakasilisk/kurisu-web) dashboard, but any server-side application holding an API key can use it.
+Reference for applications consuming the bot's HTTP/JSON API (the `webapi` cog, `cogs/webapi.py`) — read-only except for `POST /api/guilds/{gid}/export`, which starts an on-demand message-export job. The canonical consumer is the [kurisu-web](https://github.com/Bakasilisk/kurisu-web) dashboard, but any server-side application holding an API key can use it.
 
 ## Overview
 
-- **Protocol:** HTTP/1.1, JSON responses (`application/json`). All endpoints are `GET`; there are no mutating endpoints — the API is strictly read-only.
+- **Protocol:** HTTP/1.1, JSON responses (`application/json`), except the CSV download at `GET /api/guilds/{gid}/export/download` which responds `text/csv`. Every endpoint is `GET` except `POST /api/guilds/{gid}/export`, which starts a background export job — that's the API's only mutating endpoint.
 - **Bind address:** `WEBAPI_HOST`:`WEBAPI_PORT` (defaults `127.0.0.1:8080`). The server binds localhost by default; public exposure is expected to happen via a TLS-terminating reverse proxy (e.g. an `api.` nginx server block).
 - **Availability:** if the `WEBAPI_KEY` environment variable is unset, the server does not start at all. If the bot is running but has recorded no stats yet (`stats.db` missing), endpoints still respond — statistics simply come back as zeros / `null` / empty lists.
 
@@ -23,7 +23,7 @@ Every endpoint carries a documented sensitivity tier, `harmless`, `spicy`, or `s
 | Endpoint | Tier |
 |---|---|
 | `/meta`, `/guilds`, `/overview`, `/growth`, `/top`, `/channels`, `/voice`, `/leveling`, `/economy`, `/members/{uid}` | harmless |
-| `/activity`, `/quietest`, `/warnings`, `/security`, `/palantir`, `/verification`, `/moderation`, `/features` | spicy |
+| `/activity`, `/quietest`, `/warnings`, `/security`, `/palantir`, `/verification`, `/moderation`, `/features`, `/export`, `/export/download` | spicy |
 | `/users/{uid}/reminders` | self |
 
 Note: `/activity` is tiered **spicy** here by deliberate API-side operator choice, even though the bot's own `.stats activity` command is open to every member in the Discord UI. The two don't have to match — the API's tiering is a separate, intentionally more conservative decision (fine-grained hour×weekday activity patterns are treated as more sensitive in aggregate/API form than a one-off Discord command reply).
@@ -41,6 +41,7 @@ Which cogs' data is surfaced through this API, and which are deliberately left o
 | cerberus | yes (spicy) | `/security` |
 | palantir | config only (spicy) | `/palantir` — **surveillance cache/content never exposed** |
 | verification | config only (spicy) | `/verification` |
+| export | yes (spicy) | `POST`/`GET /export` (job start/status) + `GET /export/download` (CSV) — on-demand 7-day message export, the one endpoint family that returns message content; sourced live from Discord via `channel.history`, never from palantir's cache |
 | reminders | yes (self) | `/users/{uid}/reminders` — a user's own pending reminders only |
 | anilist, triggers, captions, aidetect, trace | no | stateless — nothing persisted |
 | management | config only (spicy) | `/features` — per-guild `.feature` toggle state, one entry per toggleable cog; global disable state also surfaced |
@@ -70,7 +71,13 @@ Errors are JSON objects with a single `error` string:
 | `400` | `{"error": "invalid user id"}` | `{uid}` is not an integer |
 | `401` | `{"error": "unauthorized"}` | missing/invalid `X-API-Key` |
 | `404` | `{"error": "unknown guild"}` | the bot is not in guild `{gid}` (or it isn't cached) |
+| `400` | `{"error": "invalid json"}` | export start: the POST body isn't valid JSON |
+| `400` | `{"error": "invalid requested_by"}` | export start: `requested_by` in the body isn't an integer |
+| `403` | `{"error": "not permitted"}` | export start: `requested_by` is neither the bot owner nor a current member with Manage Server in this guild |
+| `403` | `{"error": "export disabled"}` | export is disabled for this guild via `.feature disable export` |
+| `409` | `{"error": "already running", "job": {…}}` | export start: a job is already running for this guild |
 | `500` | `{"error": "internal error"}` | unhandled server error (details in the bot log) |
+| `503` | `{"error": "export unavailable"}` | the `export` cog isn't loaded |
 
 Note: requesting stats for a **user** the bot doesn't know is *not* an error — see `/members/{uid}` below.
 
@@ -466,6 +473,98 @@ Per-guild `.feature` toggle state, one entry per toggleable cog.
 - `enabled` — this guild's `.feature enable`/`disable` state, sourced from `management.json`'s `guilds.<gid>.disabled_cogs`. Fails open (`true`) if `management.json` is missing or has no entry for this guild, matching `Management.is_cog_enabled`'s own fail-open semantics.
 - `globally_disabled` — whether the cog's extension (`cogs.<name>`) is in `management.json`'s `global.disabled_extensions`, meaning the bot owner has unloaded it entirely — it isn't running at all, for any guild, regardless of `enabled`. A cog is effectively available iff `enabled` **and not** `globally_disabled`.
 - Sourced from `management.json` (not `stats.db`). No `limit` parameter.
+
+### POST `/api/guilds/{gid}/export`
+
+**Tier:** spicy
+
+Starts an on-demand CSV export of the guild's messages from the last 7 days, scanning every channel and thread the bot can read live via `channel.history` — never palantir's cache. Runs as a background job; poll `GET .../export` for progress and fetch the result from `GET .../export/download` once it's `done`.
+
+Request body:
+
+```json
+{"requested_by": "234567890123456789"}
+```
+
+Response (`202`, job just started):
+
+```json
+{
+  "state": "running",
+  "guild_id": "112233445566778899",
+  "requested_by": "234567890123456789",
+  "origin": "web",
+  "started_at": "2026-09-07T14:02:11+00:00",
+  "finished_at": null,
+  "expires_at": null,
+  "sources_scanned": 0,
+  "sources_skipped": 0,
+  "messages": 0,
+  "bytes": null,
+  "filename": null,
+  "error": null
+}
+```
+
+- `requested_by` must be the decimal snowflake of the user *initiating* the export, sourced by the consumer from its own authenticated session — **never** taken from user-editable input. The bot re-verifies this live against the guild's current member/permission state on every call (a web session's cached rights can go stale between login and click); it does not trust the caller's own authorization decision.
+- Permitted iff `requested_by` is the bot's owner, or a current member of the guild with Manage Server (which covers Administrator and the guild owner) — otherwise `403 {"error": "not permitted"}`.
+- One job per guild, held **in memory only** — a bot restart loses it, with no error surfaced until the next poll comes back `idle`.
+- A running job blocks a new start with `409 {"error": "already running", "job": {…}}` (the current job doc, so the caller can start polling immediately); a **finished** job does not block — starting again replaces it.
+- If the export would exceed 64 MiB it aborts with `state: "error"` rather than truncating.
+- `403 {"error": "export disabled"}` if the guild has `.feature disable export`.
+- `503 {"error": "export unavailable"}` if the `export` cog isn't loaded.
+
+### GET `/api/guilds/{gid}/export`
+
+**Tier:** spicy
+
+Current export job status for the guild.
+
+```json
+{
+  "state": "done",
+  "guild_id": "112233445566778899",
+  "requested_by": "234567890123456789",
+  "origin": "web",
+  "started_at": "2026-09-07T14:02:11+00:00",
+  "finished_at": "2026-09-07T14:04:47+00:00",
+  "expires_at": "2026-09-07T15:04:47+00:00",
+  "sources_scanned": 9,
+  "sources_skipped": 1,
+  "messages": 4832,
+  "bytes": 612044,
+  "filename": "export-112233445566778899-20260907T1404Z.csv",
+  "error": null
+}
+```
+
+- No job yet (or the previous one expired/was lost to a restart): `{"state": "idle"}`.
+- `state` is `"running"` while scanning (`sources_scanned`/`sources_skipped`/`messages`/`bytes` update live, so this doubles as progress polling), `"done"` once the download has something to serve, or `"error"` with `error` set to a message (e.g. exceeding the 64 MiB cap) and `filename: null`.
+- A `done` or `error` job is only kept for **60 minutes** past `finished_at` (`expires_at`); after that this endpoint reports `idle` again and the download 404s.
+- `503 {"error": "export unavailable"}` if the `export` cog isn't loaded.
+
+### GET `/api/guilds/{gid}/export/download`
+
+**Tier:** spicy
+
+Downloads the finished export as CSV. The only endpoint in this API that returns message content.
+
+```
+200 OK
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="export-112233445566778899-20260907T1404Z.csv"
+```
+
+```csv
+timestamp,channel,author_id,author,content,message_id,attachment_urls
+2026-09-06T09:14:22.104+00:00,general,234567890123456789,Alice,"hello, world",345678901234567890,
+2026-09-06T09:15:03.881+00:00,general,345678901234567890,Bob,'=1+1 looks like a formula,345678901234567891,https://cdn.discordapp.com/attachments/…/img.png
+```
+
+- Columns: `timestamp, channel, author_id, author, content, message_id, attachment_urls`. Encoded UTF-8 with a leading BOM (for Excel); a cell in `channel`/`author`/`content` starting with `= + - @` is prefixed with `'` to neutralize spreadsheet formula injection.
+- `Content-Disposition` filename pattern: `export-<gid>-<YYYYMMDDTHHMMZ>.csv`.
+- `404 {"error": "no export"}` if there's no finished, unexpired job for this guild (never started, still running, errored, or past its 60-minute TTL).
+- `503 {"error": "export unavailable"}` if the `export` cog isn't loaded.
 
 ### GET `/api/users/{uid}/reminders`
 

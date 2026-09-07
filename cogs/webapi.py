@@ -1,5 +1,6 @@
 import asyncio
 import hmac
+import json
 import logging
 import os
 import sqlite3
@@ -109,6 +110,9 @@ class WebAPI(commands.Cog):
         r.add_get("/api/guilds/{gid}/verification", self._handle_verification)
         r.add_get("/api/guilds/{gid}/moderation", self._handle_moderation)
         r.add_get("/api/guilds/{gid}/features", self._handle_features)
+        r.add_post("/api/guilds/{gid}/export", self._handle_export_start)
+        r.add_get("/api/guilds/{gid}/export", self._handle_export_status)
+        r.add_get("/api/guilds/{gid}/export/download", self._handle_export_download)
         r.add_get("/api/users/{uid}/reminders", self._handle_user_reminders)
 
     # --- Lifecycle ------------------------------------------------------
@@ -225,6 +229,27 @@ class WebAPI(commands.Cog):
             return None, web.json_response({"error": "unknown guild"}, status=404)
         return guild, None
 
+    async def _resolve_owner_id(self) -> int | None:
+        """Lazily resolve and cache the bot application's owner id. Shared by
+        /api/meta and the export endpoint's live permission check."""
+        if self._owner_id is None:
+            try:
+                info = await self.bot.application_info()
+                self._owner_id = info.owner.id
+            except Exception:
+                self._owner_id = getattr(self.bot, "owner_id", None)
+        return self._owner_id
+
+    def _export_cog(self):
+        # Runtime coupling via get_cog, never an import - the same
+        # bot.get_cog("Palantir")-with-None-guard idiom other cogs use to reach
+        # Palantir.log_event. Keeps this file at zero import-time coupling to
+        # other cogs, including the Export cog reached into here.
+        cog = self.bot.get_cog("Export")
+        if cog is None:
+            return None, web.json_response({"error": "export unavailable"}, status=503)
+        return cog, None
+
     @staticmethod
     def _period_param(request: web.Request, default: str) -> str:
         # Lowercased to match stats' now-case-insensitive period arg; falls
@@ -245,14 +270,9 @@ class WebAPI(commands.Cog):
     # --- Endpoints -----------------------------------------------------------
 
     async def _handle_meta(self, request: web.Request):
-        if self._owner_id is None:
-            try:
-                info = await self.bot.application_info()
-                self._owner_id = info.owner.id
-            except Exception:
-                self._owner_id = getattr(self.bot, "owner_id", None)
+        owner_id = await self._resolve_owner_id()
         return web.json_response({
-            "owner_id": str(self._owner_id) if self._owner_id else None,
+            "owner_id": str(owner_id) if owner_id else None,
             "guild_count": len(self.bot.guilds),
         })
 
@@ -728,6 +748,79 @@ class WebAPI(commands.Cog):
             for name in _toggleable_cog_names()
         ]
         return web.json_response({"cogs": cogs})
+
+    async def _handle_export_start(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        cog, err = self._export_cog()
+        if err:
+            return err
+
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return web.json_response({"error": "invalid json"}, status=400)
+        try:
+            uid = int(body.get("requested_by") if isinstance(body, dict) else None)
+        except (TypeError, ValueError):
+            return web.json_response({"error": "invalid requested_by"}, status=400)
+
+        # Live permission check - this is the API's most sensitive endpoint (the
+        # download route returns message content), and a web session only caches
+        # guild rights at login, so the bot re-verifies here rather than trusting
+        # the caller. Bot owner, or a live Manage Server holder (covers
+        # Administrator and the guild owner via discord.py's own
+        # guild_permissions resolution).
+        owner_id = await self._resolve_owner_id()
+        member = guild.get_member(uid)
+        permitted = uid == owner_id or (member is not None and member.guild_permissions.manage_guild)
+        if not permitted:
+            return web.json_response({"error": "not permitted"}, status=403)
+
+        status, job = cog.start_export(guild, uid, "web")
+        logger.info("webapi: export start | guild=%s requested_by=%s status=%s", guild.id, uid, status)
+        if status == "started":
+            return web.json_response(job, status=202)
+        if status == "running":
+            return web.json_response({"error": "already running", "job": job}, status=409)
+        if status == "disabled":
+            return web.json_response({"error": "export disabled"}, status=403)
+        # Contract only defines the three states above; fail closed rather than
+        # silently 200-ing on an unexpected one.
+        return web.json_response({"error": "internal error"}, status=500)
+
+    async def _handle_export_status(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        cog, err = self._export_cog()
+        if err:
+            return err
+        job = cog.job_status(guild.id)
+        return web.json_response(job if job is not None else {"state": "idle"})
+
+    async def _handle_export_download(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        cog, err = self._export_cog()
+        if err:
+            return err
+        result = cog.job_csv(guild.id)
+        if result is None:
+            return web.json_response({"error": "no export"}, status=404)
+        data, filename = result
+        logger.info("webapi: export downloaded | guild=%s bytes=%s", guild.id, len(data))
+        # The only endpoint in this cog that returns message content - every
+        # other endpoint is aggregate stats or config (mirrors the /palantir
+        # surveillance boundary's equivalent rule on the read side).
+        return web.Response(
+            body=data,
+            content_type="text/csv",
+            charset="utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     async def _handle_user_reminders(self, request: web.Request):
         # First non-guild-scoped endpoint (self-tier, see API.md) - takes a
