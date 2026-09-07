@@ -20,6 +20,7 @@ local SQLite database (`stats.db`) for server statistics. Command prefix is `.`.
   [AniList](#anilist) ·
   [Summary](#summary) ·
   [Reminders](#reminders) ·
+  [Export](#export) ·
   [Web API](#web-api) ·
   [Help](#help) ·
   [Management](#management) ·
@@ -29,8 +30,8 @@ local SQLite database (`stats.db`) for server statistics. Command prefix is `.`.
 
 ## Features
 
-Moderation, palantir, management, help, captions, aidetect, trace, anilist, reminders, and stats
-commands are also available as `/` slash commands with autocomplete descriptions; slash invocations
+Moderation, palantir, management, help, captions, aidetect, trace, anilist, reminders, export, and
+stats commands are also available as `/` slash commands with autocomplete descriptions; slash invocations
 reply ephemerally (visible only to the invoker) while `.` invocations reply publicly — except
 captions, aidetect, trace, and anilist, whose results always reply publicly regardless of
 invocation method.
@@ -352,6 +353,24 @@ fires — late by more than two minutes, it's delivered with an apology — chec
 tick, so delivery can lag up to that long. Durations can't exceed 90 days; each member can have
 at most 10 pending reminders at once.
 
+### Export
+
+`.export` / `/export` — Manage Server (bot owner bypasses the check) — scans every readable
+channel and thread (active and archived, including forum posts) for the last 7 days of
+messages, bots included, and DMs you a CSV with columns `timestamp, channel, author_id,
+author, content, message_id, attachment_urls`. Only one export can run per server at a time;
+`.export` again while one is running just reports that.
+
+The CSV is DM'd to you when the scan finishes; if it's too big for a DM it's sent
+gzip-compressed instead, and if it's still too big (or your DMs are closed) you get pointed
+at the web dashboard, where a finished export stays downloadable for 60 minutes. Attachment
+URLs in the CSV expire after roughly 24 hours (Discord's CDN signing), so save anything you
+need promptly. Can be disabled per server with `.feature disable export`. A bot restart loses
+a running job — start it again.
+
+**This CSV contains raw message content** — handle the downloaded file the same way you'd
+handle any export of your members' messages.
+
 ### Help
 
 `.help` / `/help` lists the cogs you have any usable command in. `.help <cog>` /
@@ -394,10 +413,10 @@ unloaded across restarts, and `management` itself can't be unloaded.
 
 ### Web API
 
-A read-only HTTP/JSON API (`cogs/webapi.py`) for a separate web frontend — mirrors the `stats`
-cog's queries as JSON instead of Discord embeds, plus name/avatar resolution from the bot's live
-cache. Infra, not a per-guild toggleable cog (like management/help). Full request/response
-reference in [API.md](API.md).
+An HTTP/JSON API (`cogs/webapi.py`), read-only except `POST .../export`, for a separate web
+frontend — mirrors the `stats` cog's queries as JSON instead of Discord embeds, plus
+name/avatar resolution from the bot's live cache. Infra, not a per-guild toggleable cog (like
+management/help). Full request/response reference in [API.md](API.md).
 
 Requires `WEBAPI_KEY` in `.env` (comma-separated to accept multiple keys during rotation) — every
 request needs a matching `X-API-Key` header, or the server doesn't start at all. Binds to
@@ -423,6 +442,9 @@ frontend on the same host calls it over localhost.
 | `GET /api/guilds/{id}/moderation` | Mod-log channel + currently-locked channels, spicy/mod-tier (restoration snapshots never exposed) |
 | `GET /api/guilds/{id}/features` | Per-guild `.feature` cog toggle state, spicy/mod-tier |
 | `GET /api/users/{uid}/reminders` | A user's own pending reminders — not guild-scoped |
+| `POST /api/guilds/{id}/export` | Start an export job for this guild (mod-only, live-checked) |
+| `GET /api/guilds/{id}/export` | Current/last export job status for this guild |
+| `GET /api/guilds/{id}/export/download` | Download the finished export's CSV |
 
 Member profiles (`/members/{uid}`) also include the member's economy payday streak alongside
 balance/rank.

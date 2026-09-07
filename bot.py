@@ -70,6 +70,7 @@ INITIAL_EXTENSIONS = [
     "cogs.anilist",
     "cogs.summary",
     "cogs.reminders",
+    "cogs.export",
     "cogs.webapi",
 ]
 
