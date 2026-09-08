@@ -41,7 +41,7 @@ Which cogs' data is surfaced through this API, and which are deliberately left o
 | cerberus | yes (spicy) | `/security` |
 | palantir | config only (spicy) | `/palantir` — **surveillance cache/content never exposed** |
 | verification | config only (spicy) | `/verification` |
-| export | yes (spicy) | `POST`/`GET /export` (job start/status) + `GET /export/download` (CSV) — on-demand 7-day message export, the one endpoint family that returns message content; sourced live from Discord via `channel.history`, never from palantir's cache |
+| export | yes (spicy) | `POST`/`GET /export` (job start/status) + `GET /export/download` (CSV) — on-demand message export (4 weeks by default, 1–12 selectable via the `weeks` body field), the one endpoint family that returns message content; sourced live from Discord via `channel.history`, never from palantir's cache |
 | reminders | yes (self) | `/users/{uid}/reminders` — a user's own pending reminders only |
 | anilist, triggers, captions, aidetect, trace | no | stateless — nothing persisted |
 | management | config only (spicy) | `/features` — per-guild `.feature` toggle state, one entry per toggleable cog; global disable state also surfaced |
@@ -90,6 +90,7 @@ Note: the `/users/{uid}/...` endpoints (currently just `/users/{uid}/reminders`)
 - **`period` query parameter.** Endpoints that accept it take one of `week` (last 7 days), `month` (last 30 days), `year` (last 365 days), or `all`, matched case-insensitively (`?period=WEEK` is honored as `week`). The window is computed at day granularity: `day >= today_utc − N days`. An unrecognized value silently falls back to the endpoint's default (no error). The response echoes the period actually used, always lowercase.
 - **`limit` query parameter.** The ranked-list endpoints (`/top`, `/channels`, `/voice`, `/quietest`, `/leveling`, `/economy`, `/warnings`) accept an optional `limit` — a positive integer capping the number of `entries` returned (applied after sorting, so it's always the top/bottom N). When absent, non-numeric, or `<= 0`, the full list is returned (no error), which can be as long as the guild's member/channel count — pass a `limit` unless you really need everything. There is no offset/pagination. `/moderation`, `/features`, and `/users/{uid}/reminders` take no `limit` param at all — each returns an inherently bounded list (locked channels, toggleable cogs, a per-user reminder cap), not a leaderboard.
 - **No rate limiting.** Be a considerate consumer; every request runs SQL against the bot's stats database.
+- **`weeks` request-body parameter (export start only).** Unlike `period`/`limit` above (query parameters on `GET` endpoints), `POST /api/guilds/{gid}/export` accepts an optional `weeks` field in its JSON **body**: an integer 1–12. Missing, non-numeric, or out-of-range values silently fall back/clamp (4 as the default, 12 as the ceiling) rather than 400ing — the same silent-fallback idiom as `period`/`limit`, just on a body field instead of a query string. The effective value actually used comes back as `"weeks"` on the job object, so the caller always knows the real window even after a clamp.
 
 ### Shared objects
 
@@ -478,13 +479,15 @@ Per-guild `.feature` toggle state, one entry per toggleable cog.
 
 **Tier:** spicy
 
-Starts an on-demand CSV export of the guild's messages from the last 7 days, scanning every channel and thread the bot can read live via `channel.history` — never palantir's cache. Runs as a background job; poll `GET .../export` for progress and fetch the result from `GET .../export/download` once it's `done`.
+Starts an on-demand CSV export of the guild's messages from the last `weeks` weeks (4 by default), scanning every channel and thread the bot can read live via `channel.history` — never palantir's cache. Runs as a background job; poll `GET .../export` for progress and fetch the result from `GET .../export/download` once it's `done`.
 
 Request body:
 
 ```json
-{"requested_by": "234567890123456789"}
+{"requested_by": "234567890123456789", "weeks": 4}
 ```
+
+- `weeks` is optional: an integer 1–12. Missing, non-numeric, or out-of-range values silently fall back/clamp (see the Conventions section above) — this field is never validated into a `400`.
 
 Response (`202`, job just started):
 
@@ -494,6 +497,7 @@ Response (`202`, job just started):
   "guild_id": "112233445566778899",
   "requested_by": "234567890123456789",
   "origin": "web",
+  "weeks": 4,
   "started_at": "2026-09-07T14:02:11+00:00",
   "finished_at": null,
   "expires_at": null,
@@ -506,11 +510,11 @@ Response (`202`, job just started):
 }
 ```
 
-- `requested_by` must be the decimal snowflake of the user *initiating* the export, sourced by the consumer from its own authenticated session — **never** taken from user-editable input. The bot re-verifies this live against the guild's current member/permission state on every call (a web session's cached rights can go stale between login and click); it does not trust the caller's own authorization decision.
+- `requested_by` must be the decimal snowflake of the user *initiating* the export, sourced by the consumer from its own authenticated session — **never** taken from user-editable input. The bot re-verifies this live against the guild's current member/permission state on every call (a web session's cached rights can go stale between login and click); it does not trust the caller's own authorization decision. This does **not** extend to `weeks` — that field is advisory input, not a security parameter, and is simply clamped rather than authorization-checked.
 - Permitted iff `requested_by` is the bot's owner, or a current member of the guild with Manage Server (which covers Administrator and the guild owner) — otherwise `403 {"error": "not permitted"}`.
 - One job per guild, held **in memory only** — a bot restart loses it, with no error surfaced until the next poll comes back `idle`.
-- A running job blocks a new start with `409 {"error": "already running", "job": {…}}` (the current job doc, so the caller can start polling immediately); a **finished** job does not block — starting again replaces it.
-- If the export would exceed 64 MiB it aborts with `state: "error"` rather than truncating.
+- A running job blocks a new start with `409 {"error": "already running", "job": {…}}` (the current job doc, so the caller can start polling immediately, including the *running* job's own `weeks`); a **finished** job does not block — starting again replaces it.
+- If the export would exceed 64 MiB, or 150,000 rows (a separate memory guard, independent of the byte cap), it aborts with `state: "error"` rather than truncating — retry with a smaller `weeks` value.
 - `403 {"error": "export disabled"}` if the guild has `.feature disable export`.
 - `503 {"error": "export unavailable"}` if the `export` cog isn't loaded.
 
@@ -526,6 +530,7 @@ Current export job status for the guild.
   "guild_id": "112233445566778899",
   "requested_by": "234567890123456789",
   "origin": "web",
+  "weeks": 4,
   "started_at": "2026-09-07T14:02:11+00:00",
   "finished_at": "2026-09-07T14:04:47+00:00",
   "expires_at": "2026-09-07T15:04:47+00:00",

@@ -402,17 +402,23 @@ longer show up in `ticket show`. Like other cogs, tickets can be disabled per se
 ### Export
 
 `.export` / `/export` — Manage Server (bot owner bypasses the check) — scans every readable
-channel and thread (active and archived, including forum posts) for the last 7 days of
+channel and thread (active and archived, including forum posts) for the last 4 weeks of
 messages, bots included, and DMs you a CSV with columns `timestamp, channel, author_id,
 author, content, message_id, attachment_urls`. Only one export can run per server at a time;
-`.export` again while one is running just reports that.
+`.export` again while one is running just reports that. The web dashboard offers a wider
+choice, 1 to 12 weeks, when starting an export there.
 
-The CSV is DM'd to you when the scan finishes; if it's too big for a DM it's sent
-gzip-compressed instead, and if it's still too big (or your DMs are closed) you get pointed
-at the web dashboard, where a finished export stays downloadable for 60 minutes. Attachment
-URLs in the CSV expire after roughly 24 hours (Discord's CDN signing), so save anything you
-need promptly. Can be disabled per server with `.feature disable export`. A bot restart loses
-a running job — start it again.
+The CSV is DM'd to you when the scan finishes. At 4+ weeks a plain CSV commonly outgrows a
+DM's 10 MiB limit, so it's gzip-compressed first, and if it's still too big — or your DMs are
+closed — you get pointed at the web dashboard instead, where a finished export stays
+downloadable for 60 minutes. Over a window this wide that's the normal path, not a rare edge
+case. Attachment URLs in the CSV expire after roughly 24 hours (Discord's CDN signing), so
+save anything you need promptly. Can be disabled per server with `.feature disable export`.
+A bot restart loses a running job — start it again.
+
+A very large scan stops rather than exhausting the bot's memory: an export that would exceed
+64 MiB or 150,000 messages aborts with an error telling you to retry with fewer weeks. The
+whole CSV is built in RAM, so this is a real ceiling on a busy server, not a formality.
 
 **This CSV contains raw message content** — handle the downloaded file the same way you'd
 handle any export of your members' messages.

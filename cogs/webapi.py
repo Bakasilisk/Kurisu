@@ -778,7 +778,14 @@ class WebAPI(commands.Cog):
         if not permitted:
             return web.json_response({"error": "not permitted"}, status=403)
 
-        status, job = cog.start_export(guild, uid, "web")
+        # `weeks` is optional and silently clamped by the cog (see Export._clamp_weeks) —
+        # unlike `requested_by` above, an invalid/missing value is not a 400 here. No
+        # isinstance(body, dict) check needed on this .get(): the uid parse above only
+        # succeeds when body is a dict (int(None) always raises otherwise), so by this point
+        # body is already known to be one. No range check either — the bound lives in exactly
+        # one place, Export.start_export, mirroring _period_param/_limit_param's silent
+        # query-param fallback (this is the body-param equivalent).
+        status, job = cog.start_export(guild, uid, "web", weeks=body.get("weeks"))
         logger.info("webapi: export start | guild=%s requested_by=%s status=%s", guild.id, uid, status)
         if status == "started":
             return web.json_response(job, status=202)

@@ -1,4 +1,5 @@
-"""Live, on-demand CSV export of the last EXPORT_DAYS of message activity.
+"""Live, on-demand CSV export of the last EXPORT_DEFAULT_WEEKS (4 weeks by default, 1-12
+selectable via the web API) of message activity.
 
 Unlike palantir (surveillance boundary, content never leaves the bot) and stats (aggregates
 only, SQLite), this cog is the **one place message content leaves the bot** — via Discord DM or
@@ -26,9 +27,17 @@ from .management import cog_enabled, common_error_reply, has_permissions_or_owne
 
 logger = logging.getLogger(__name__)
 
-EXPORT_DAYS = 7
+EXPORT_DEFAULT_WEEKS = 4
+EXPORT_MAX_WEEKS = 12
 CHANNEL_SLEEP = 1.0
 MAX_EXPORT_BYTES = 64 * 1024 * 1024  # 64 MiB — abort with an error, checked live + after serialization
+# Memory guard, separate from MAX_EXPORT_BYTES: `rows` (and then _rows_to_csv's sorted()/StringIO/
+# .encode() copies) live entirely in RAM on a 961 MB host with ~273 MB free. The live byte
+# estimate below undercounts a real row by ~3.4x (measured: a typical row is ~499 B of actual
+# Python objects vs. ~146 B counted), so bytes alone can't be trusted to catch a large scan before
+# it OOMs the bot process — this row-count ceiling is the second, independent backstop. 150k rows
+# is ~120 MB peak (rows + CSV string + encoded bytes) on this host, with headroom.
+MAX_EXPORT_ROWS = 150_000
 RESULT_TTL_SECONDS = 3600  # 1h
 # guild.filesize_limit is wrong for DMs — boost-tier upload limits only apply to guild uploads.
 DM_MAX_BYTES = discord.utils.DEFAULT_FILE_SIZE_LIMIT_BYTES  # 10 MiB
@@ -39,7 +48,13 @@ EXPORT_WEB_URL = os.environ.get("EXPORT_WEB_URL", "")
 
 
 class _TooLarge(Exception):
-    """Internal signal only — running or final CSV size exceeded MAX_EXPORT_BYTES."""
+    """Internal signal only — either the running/final CSV size exceeded MAX_EXPORT_BYTES, or
+    the row count exceeded MAX_EXPORT_ROWS (the memory guard). `reason` ("bytes" | "rows")
+    lets the caller give a distinct, actionable job.error for each."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
 
 
 # --- Pure helpers (no bot instance — directly testable) -------------------------------------
@@ -94,6 +109,30 @@ def _rows_to_csv(rows) -> bytes:
     return buf.getvalue().encode("utf-8-sig")
 
 
+def _clamp_weeks(value) -> int:
+    """Coerce `value` (the web API's raw, untrusted `weeks` body field) to an int in
+    [1, EXPORT_MAX_WEEKS] — the *only* place this bound is enforced (webapi.py passes the raw
+    value straight through). `None`/missing and anything that fails to coerce fall back to
+    EXPORT_DEFAULT_WEEKS; values above the max are clamped down to it.
+
+    Deliberately NOT a plain clamp on the low end: a value below 1 (including `0`) also falls
+    back to the default rather than clamping *up* to 1. `0` isn't a legitimate choice, and a
+    broken client sending something like `Number("")` must not silently hand back the
+    *shortest* possible window — falling back to the default is the safer failure mode. Don't
+    "fix" this into `max(1, min(...))`.
+
+    OverflowError is caught alongside TypeError/ValueError because `json.loads` accepts the
+    bare literal `Infinity`, and `int(float("inf"))` raises OverflowError — uncaught, that
+    would escape all the way out as an aiohttp 500 instead of a clamp."""
+    try:
+        weeks = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return EXPORT_DEFAULT_WEEKS
+    if weeks < 1:
+        return EXPORT_DEFAULT_WEEKS
+    return min(weeks, EXPORT_MAX_WEEKS)
+
+
 def _web_hint(guild_id: int) -> str:
     """Text pointing at where the finished export can be picked up if it can't be DM'd — always
     names the 60-minute window."""
@@ -109,6 +148,7 @@ class ExportJob:
     guild_id: int
     requested_by: int
     origin: str  # "discord" | "web"
+    weeks: int = EXPORT_DEFAULT_WEEKS
     state: str = "running"  # "running" | "done" | "error"
     started_at: datetime = field(default_factory=discord.utils.utcnow)
     finished_at: datetime | None = None
@@ -138,6 +178,7 @@ class ExportJob:
             "guild_id": str(self.guild_id),
             "requested_by": str(self.requested_by),
             "origin": self.origin,
+            "weeks": self.weeks,
             "started_at": self.started_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
@@ -199,19 +240,24 @@ class Export(commands.Cog):
     # dict lookups) or only need to *schedule* work (start_export's asyncio.create_task doesn't
     # require awaiting).
 
-    def start_export(self, guild: discord.Guild, requested_by: int, origin: str, on_done=None) -> tuple[str, dict | None]:
+    def start_export(self, guild: discord.Guild, requested_by: int, origin: str, on_done=None, weeks=None) -> tuple[str, dict | None]:
         """Start (or report the already-running) export job for `guild`.
         Returns ("disabled", None) | ("running", job_json) | ("started", job_json).
         A finished job never blocks a new one — only "running" does. `on_done`, if given, is
         awaited with the finished ExportJob once _run_export completes; only the Discord command
-        passes one (a web-triggered job DMs nobody)."""
+        passes one (a web-triggered job DMs nobody).
+
+        `weeks` is the *only* place the lookback window is validated (webapi.py passes its raw,
+        untrusted body value straight through) — see `_clamp_weeks`. Default `None` keeps this
+        call backwards compatible: an old, browser-cached `export.js` that posts no `weeks` at
+        all still gets EXPORT_DEFAULT_WEEKS."""
         if not cog_enabled(self.bot, guild.id, "export"):
             return ("disabled", None)
         self._prune(guild.id)
         existing = self._jobs.get(guild.id)
         if existing is not None and existing.state == "running":
             return ("running", existing.to_json())
-        job = ExportJob(guild_id=guild.id, requested_by=requested_by, origin=origin)
+        job = ExportJob(guild_id=guild.id, requested_by=requested_by, origin=origin, weeks=_clamp_weeks(weeks))
         self._jobs[guild.id] = job
         job.task = asyncio.create_task(self._run_job(job, guild, on_done))
         logger.info("Export: started | guild=%s requested_by=%s origin=%s", guild.id, requested_by, origin)
@@ -242,7 +288,7 @@ class Export(commands.Cog):
         (every cogs/*.py besides __init__.py/storage.py is discovered). Deviates from the
         stats version only for the time window: archived-thread pagination stops early via
         `break` once `thread.archive_timestamp < cutoff`, since archived_threads() yields
-        newest-archived-first, so everything after that point is outside the export's 7-day
+        newest-archived-first, so everything after that point is outside the export's
         window anyway."""
         for channel in guild.text_channels:
             yield channel
@@ -277,9 +323,9 @@ class Export(commands.Cog):
     # --- The scan itself ---------------------------------------------------------------------
 
     async def _run_export(self, job: ExportJob, guild: discord.Guild) -> None:
-        """Scan every readable source for the last EXPORT_DAYS and populate `job` in place.
-        Counters (sources_scanned/skipped, messages) update live as sources are processed, so
-        polling (job_status) shows progress on a slow, large-server scan.
+        """Scan every readable source for the last `job.weeks` weeks and populate `job` in
+        place. Counters (sources_scanned/skipped, messages) update live as sources are
+        processed, so polling (job_status) shows progress on a slow, large-server scan.
 
         Deliberate cancellation handling: a `.cog reload export`/shutdown calls cog_unload,
         which cancels job.task. Rather than letting CancelledError propagate out of this
@@ -287,7 +333,7 @@ class Export(commands.Cog):
         state with a descriptive message, and swallowed — so the caller (_run_job) still runs
         on_done and the requester gets a "Export failed: cancelled…" DM instead of silence.
         This is a deliberate product decision, not an oversight."""
-        cutoff = discord.utils.utcnow() - timedelta(days=EXPORT_DAYS)
+        cutoff = discord.utils.utcnow() - timedelta(weeks=job.weeks)
         rows: list[tuple] = []
         estimated_bytes = 0
         try:
@@ -316,7 +362,9 @@ class Export(commands.Cog):
                         job.messages += 1
                         estimated_bytes += len(row[4]) + len(row[6]) + len(row[3]) + 80
                         if estimated_bytes > MAX_EXPORT_BYTES:
-                            raise _TooLarge()
+                            raise _TooLarge("bytes")
+                        if len(rows) > MAX_EXPORT_ROWS:
+                            raise _TooLarge("rows")
                 except (discord.Forbidden, discord.HTTPException, discord.ClientException):
                     job.sources_skipped += 1
                     continue
@@ -325,13 +373,16 @@ class Export(commands.Cog):
 
             data = await asyncio.to_thread(_rows_to_csv, rows)
             if len(data) > MAX_EXPORT_BYTES:
-                raise _TooLarge()
+                raise _TooLarge("bytes")
             job.data = data
             job.filename = f"export-{guild.id}-{discord.utils.utcnow():%Y%m%dT%H%MZ}.csv"
             job.state = "done"
-        except _TooLarge:
+        except _TooLarge as exc:
             job.state = "error"
-            job.error = f"export exceeds the {MAX_EXPORT_BYTES // (1024 * 1024)} MiB cap"
+            if exc.reason == "rows":
+                job.error = f"export exceeds {MAX_EXPORT_ROWS:,} rows — retry with fewer weeks"
+            else:
+                job.error = f"export exceeds the {MAX_EXPORT_BYTES // (1024 * 1024)} MiB cap — retry with fewer weeks"
         except asyncio.CancelledError:
             job.state = "error"
             job.error = "cancelled (cog reloaded or bot shutting down)"
@@ -402,14 +453,14 @@ class Export(commands.Cog):
 
     @commands.hybrid_command(
         name="export",
-        description="Export the last 7 days of messages as CSV (Manage Server only).",
+        description=f"Export the last {EXPORT_DEFAULT_WEEKS} weeks of messages as CSV (Manage Server only).",
     )
     @app_commands.default_permissions(manage_guild=True)
     @has_permissions_or_owner(manage_guild=True)
     @commands.guild_only()
     async def export(self, ctx):
         """Scan every readable channel and thread (active/archived, including forum posts) for
-        the last 7 days of messages and DM the requester a CSV. One export job runs per guild at
+        the last 4 weeks of messages and DM the requester a CSV. One export job runs per guild at
         a time; a finished job stays available (one Discord DM, or the web dashboard) for 60
         minutes."""
         guild = ctx.guild
@@ -429,7 +480,7 @@ class Export(commands.Cog):
         else:
             await self._reply(
                 ctx,
-                "Export started — scanning every readable channel and thread for the last 7 days. "
+                "Export started — scanning every readable channel and thread for the last 4 weeks. "
                 "I'll DM you the CSV when it's done.",
             )
 
