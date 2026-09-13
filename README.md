@@ -399,6 +399,10 @@ Limits: one open ticket per member per server, 1500 characters per message, 200 
 ticket, and one DM every 5 seconds. Closed tickets are kept for 30 days, after which they no
 longer show up in `ticket show`. Like other cogs, tickets can be disabled per server with
 `.feature disable tickets`.
+
+A member-facing walkthrough of the same system — written to be pinned in a server rather than
+read here — lives in [TICKETS.md](TICKETS.md).
+
 ### Export
 
 `.export` / `/export` — Manage Server (bot owner bypasses the check) — scans every readable
