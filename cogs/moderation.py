@@ -23,6 +23,12 @@ WARNINGS_FILE = data_path("warnings.json")
 LOCKS_FILE = data_path("channel_locks.json")
 MODLOG_FILE = data_path("mod_log.json")
 
+# An embed description caps at 4096 characters (a whole embed at 6000 — the limit
+# the help cog hit once already). A guild allows up to 250 roles and a role mention
+# is ~22 characters, so a maximally-roled member overruns it: budget under the cap
+# and spill the rest into an "…and N more" line rather than losing the whole reply.
+ROLE_LIST_CHAR_BUDGET = 3900
+
 DURATION_RE = re.compile(r"^(\d+)([smhd])$")
 DURATION_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
@@ -35,6 +41,23 @@ def parse_duration(text: str) -> timedelta:
         )
     amount, unit = match.groups()
     return timedelta(**{DURATION_UNITS[unit]: int(amount)})
+
+
+def format_role_list(roles) -> str:
+    """Role mentions, highest first, truncated to ROLE_LIST_CHAR_BUDGET with a
+    trailing "…and N more" line. `roles` must already exclude @everyone."""
+    shown = []
+    length = 0
+    for role in roles:
+        if length + len(role.mention) + 2 > ROLE_LIST_CHAR_BUDGET:
+            break
+        shown.append(role.mention)
+        length += len(role.mention) + 2
+    text = ", ".join(shown)
+    remaining = len(roles) - len(shown)
+    if remaining:
+        text += f"\n…and {remaining} more"
+    return text
 
 
 def snapshot_overwrite(channel, target) -> dict | None:
@@ -90,6 +113,26 @@ class Moderation(commands.Cog):
             return f"You can't {verb} someone with an equal or higher role than you."
         if not bot_outranks(ctx.guild, member):
             return f"My role isn't high enough to {verb} that member."
+        return None
+
+    async def _role_error(self, ctx, role, verb: str) -> str | None:
+        """Return an error string if `role` itself is out of reach — by what it is,
+        by the actor's hierarchy, or by the bot's — else None. The role-side twin of
+        _hierarchy_error: handing a role to a member needs both the member and the
+        role to be in reach, so the role commands run both. Every message here can
+        name the role, so callers must reply with AllowedMentions(roles=False)."""
+        if role.is_default():
+            return "`@everyone` isn't a role I can add or remove."
+        if role.managed:
+            # `managed` covers bot roles, integration and subscription roles, and the
+            # boost role — Discord owns who holds them, so nobody can assign them by hand.
+            if role.is_premium_subscriber():
+                return f"{role.mention} is the server's boost role — Discord manages who has it."
+            return f"{role.mention} is managed by a bot or integration — nobody can {verb} it by hand."
+        if not await actor_outranks(self.bot, ctx, role):
+            return f"You can't {verb} a role that's equal to or above your own top role."
+        if not bot_outranks(ctx.guild, role):
+            return f"My role isn't high enough to {verb} {role.mention}."
         return None
 
     @staticmethod
@@ -177,6 +220,14 @@ class Moderation(commands.Cog):
             await self._reply(ctx, "I couldn't find that user.")
         elif isinstance(error, commands.ChannelNotFound):
             await self._reply(ctx, "I couldn't find that channel.")
+        elif isinstance(error, commands.RoleNotFound):
+            # Before common_error_reply: RoleNotFound is a BadArgument subclass, and the
+            # shared helper would surface discord.py's raw 'Role "x" not found.' instead.
+            await self._reply(
+                ctx,
+                "I couldn't find that role — use its exact name (case matters, and no "
+                "quotes needed), a role mention, or its ID.",
+            )
         elif isinstance(error, commands.CheckAnyFailure):
             # CheckAnyFailure (from has_permissions_or_owner's check_any) is a
             # CheckFailure sibling, not a MissingPermissions subclass — common_error_reply
@@ -347,6 +398,164 @@ class Moderation(commands.Cog):
         await self._log_action(
             ctx, "Warnings Cleared", discord.Color.blue(), target=member,
             **{"Warnings cleared": str(count)},
+        )
+
+    # No fallback= on this group, unlike every other group in the repo: a
+    # fallback registers the name slash-side only, so `.role list @member` would
+    # then try to parse "list" as a member and fail with MemberNotFound. Palantir
+    # and stats work around that with a second with_app_command=False subcommand;
+    # a group without a fallback simply registers /role add, /role remove and
+    # /role list, with the group callback serving the prefix side alone.
+    @commands.hybrid_group(
+        name="role", invoke_without_command=True, case_insensitive=True,
+        description="Add or remove a member's roles.",
+    )
+    @app_commands.default_permissions(manage_roles=True)
+    @has_permissions_or_owner(manage_roles=True)
+    @commands.guild_only()
+    async def role(self, ctx, member: discord.Member | None = None):
+        """Show a member's roles, highest first (defaults to yourself)."""
+        await self._show_roles(ctx, member or ctx.author)
+
+    async def _show_roles(self, ctx, member):
+        """Render a member's roles — shared by the group callback (`.role @member`)
+        and the explicit `role list` subcommand."""
+        # member.roles is position-ascending with @everyone pinned at index 0.
+        roles = [role for role in reversed(member.roles) if not role.is_default()]
+        if not roles:
+            await self._reply(ctx, f"{member.mention} has no roles.")
+            return
+        embed = discord.Embed(
+            title=f"Roles for {member}",
+            description=format_role_list(roles),
+            color=discord.Color.blurple(),
+        )
+        # The count stays exact even when the description above was truncated.
+        embed.set_footer(text=f"{len(roles)} role(s)")
+        await self._reply(
+            ctx, embed=embed, allowed_mentions=discord.AllowedMentions(roles=False)
+        )
+
+    @role.command(name="list", description="Show a member's roles, highest first.")
+    @has_permissions_or_owner(manage_roles=True)
+    @commands.guild_only()
+    @app_commands.describe(member="The member whose roles to list (defaults to you).")
+    async def role_list(self, ctx, member: discord.Member | None = None):
+        """Show a member's roles, highest first."""
+        await self._show_roles(ctx, member or ctx.author)
+
+    async def _role_change_error(self, ctx, member, role, member_verb: str, role_verb: str) -> str | None:
+        """The checks `role add` and `role remove` share: the target member must be
+        in reach (hierarchy, and not the server owner) and so must the role itself."""
+        if member.id == ctx.guild.owner_id:
+            # Not covered by the hierarchy checks below: the server owner can hold no
+            # roles at all, so those would pass, yet Discord refuses any role change
+            # on the owner regardless of position.
+            return "I can't change the server owner's roles — Discord doesn't allow it."
+        error = await self._hierarchy_error(ctx, member, member_verb)
+        if error:
+            return error
+        return await self._role_error(ctx, role, role_verb)
+
+    # bot_has_guild_permissions, not bot_has_permissions (which the rest of this cog
+    # uses): Manage Roles shares its permission bit with a channel overwrite's "Manage
+    # Permissions", so the channel-scoped check would refuse in a channel that denies
+    # the bot that overwrite even though role management is a guild-wide power — and
+    # pass in one that grants it, only for the API call to 403. lock/unlock's
+    # bot_has_permissions is correct as-is; that one really is channel-scoped.
+    @role.command(name="add", aliases=["give"], description="Give a member a role.")
+    @has_permissions_or_owner(manage_roles=True)
+    @commands.bot_has_guild_permissions(manage_roles=True)
+    @commands.guild_only()
+    @app_commands.describe(member="The member to give the role to.", role="The role to give.")
+    async def role_add(self, ctx, member: discord.Member, *, role: discord.Role):
+        """Give a member a role."""
+        # Every reply below passes AllowedMentions(roles=False) (the .verify idiom):
+        # a mentionable role would otherwise ping the whole server from a bot reply.
+        quiet = discord.AllowedMentions(roles=False)
+        error = await self._role_change_error(ctx, member, role, "give a role to", "grant")
+        if error:
+            await self._reply(ctx, error, allowed_mentions=quiet)
+            return
+        if role in member.roles:
+            await self._reply(
+                ctx, f"{member.mention} already has {role.mention}.", allowed_mentions=quiet
+            )
+            return
+
+        try:
+            # The audit-log reason names the moderator because palantir surfaces
+            # entry.reason in its modactions embed — without it the log would
+            # attribute the change to the bot alone.
+            await member.add_roles(role, reason=f"Role granted by {ctx.author} via .role add")
+        except discord.Forbidden:
+            await self._reply(
+                ctx,
+                f"Discord refused that role change — check that my role is above "
+                f"{role.mention} and that I still have Manage Roles.",
+                allowed_mentions=quiet,
+            )
+            return
+        except discord.HTTPException:
+            logger.exception("role add: failed to give role %s to member %s", role.id, member.id)
+            await self._reply(
+                ctx, "That role change failed — Discord returned an error. Try again in a moment."
+            )
+            return
+
+        await self._reply(
+            ctx, f"✅ Gave {member.mention} the {role.mention} role.", allowed_mentions=quiet
+        )
+        await self._log_action(
+            ctx, "Role Added", discord.Color.green(), target=member,
+            # Mention plus name: the mention renders in the embed, the name keeps the
+            # logfile line readable (_log_action reuses this value for both).
+            Role=f"{role.mention} ({role.name})",
+        )
+
+    @role.command(name="remove", aliases=["take"], description="Take a role away from a member.")
+    @has_permissions_or_owner(manage_roles=True)
+    @commands.bot_has_guild_permissions(manage_roles=True)
+    @commands.guild_only()
+    @app_commands.describe(member="The member to take the role from.", role="The role to take.")
+    async def role_remove(self, ctx, member: discord.Member, *, role: discord.Role):
+        """Take a role away from a member."""
+        quiet = discord.AllowedMentions(roles=False)
+        error = await self._role_change_error(ctx, member, role, "take a role from", "take")
+        if error:
+            await self._reply(ctx, error, allowed_mentions=quiet)
+            return
+        if role not in member.roles:
+            await self._reply(
+                ctx, f"{member.mention} doesn't have {role.mention}.", allowed_mentions=quiet
+            )
+            return
+
+        try:
+            await member.remove_roles(role, reason=f"Role removed by {ctx.author} via .role remove")
+        except discord.Forbidden:
+            await self._reply(
+                ctx,
+                f"Discord refused that role change — check that my role is above "
+                f"{role.mention} and that I still have Manage Roles.",
+                allowed_mentions=quiet,
+            )
+            return
+        except discord.HTTPException:
+            logger.exception(
+                "role remove: failed to take role %s from member %s", role.id, member.id
+            )
+            await self._reply(
+                ctx, "That role change failed — Discord returned an error. Try again in a moment."
+            )
+            return
+
+        await self._reply(
+            ctx, f"➖ Removed the {role.mention} role from {member.mention}.", allowed_mentions=quiet
+        )
+        await self._log_action(
+            ctx, "Role Removed", discord.Color.orange(), target=member,
+            Role=f"{role.mention} ({role.name})",
         )
 
     @commands.hybrid_command(

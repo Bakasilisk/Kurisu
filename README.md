@@ -76,6 +76,9 @@ Auto-replies on every message:
 | `warn <member> [reason]` | Warn a member and record it | Moderate Members |
 | `warnings` / `warnlist <member>` | List a member's warnings | Moderate Members |
 | `clearwarnings <member>` | Clear a member's warnings | Moderate Members |
+| `role add` / `role give <member> <role>` | Give a member a role | Manage Roles |
+| `role remove` / `role take <member> <role>` | Take a role away from a member | Manage Roles |
+| `role list [member]` / `role [member]` | Show a member's roles, highest first (default: yourself) | Manage Roles |
 | `purge` / `clear <amount> [member]` | Bulk-delete messages | Manage Messages |
 | `slowmode <seconds>` | Set the channel's slowmode | Manage Channels |
 | `lock` / `unlock [reason]` | Block/restore @everyone sending in the channel | Manage Channels |
@@ -87,6 +90,11 @@ Auto-replies on every message:
   configured — so ephemeral slash actions are still traceable.
 - `lock`/`unlock` snapshot each channel's exact pre-lock permission state (persisted, so it
   survives restarts) and restore what was there before, rather than blindly resetting it.
+- `role add`/`role remove` take the role as the rest of the line, so a multi-word name
+  needs no quotes (`.role add @someone Server Booster`) — the name must match exactly,
+  case included, and a role mention or ID works too. `@everyone`, roles managed by a bot
+  or integration, the boost role, the server owner's roles, and any role at or above your
+  own (or the bot's) top role are all refused.
 - The `/` versions of these commands are hidden from members who lack the required
   permission, by default (Discord may still let a server admin re-enable a hidden command for
   specific users/roles via Integrations).

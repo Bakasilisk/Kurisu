@@ -84,11 +84,15 @@ def has_permissions_or_owner(**perms):
     return commands.check_any(commands.has_permissions(**perms), commands.is_owner())
 
 
-async def actor_outranks(bot, ctx, member) -> bool:
-    """Whether the invoker may act on `member` by role hierarchy. The guild owner
-    and the bot owner both bypass the check."""
+async def actor_outranks(bot, ctx, role_or_member) -> bool:
+    """Whether the invoker may act on `role_or_member` by role hierarchy — a
+    discord.Member is compared by its top role, a discord.Role directly (mirroring
+    bot_outranks, so "can this actor hand out this role?" reuses the same rule as
+    "can this actor act on this member?"). The guild owner and the bot owner both
+    bypass the check."""
+    top_role = role_or_member.top_role if isinstance(role_or_member, discord.Member) else role_or_member
     return (
-        member.top_role < ctx.author.top_role
+        top_role < ctx.author.top_role
         or ctx.author == ctx.guild.owner
         or await bot.is_owner(ctx.author)
     )
