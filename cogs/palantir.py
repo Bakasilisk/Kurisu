@@ -23,6 +23,12 @@ MSG_CACHE_MAX_AGE_DAYS = 14
 MSG_CACHE_FLUSH_INTERVAL_SECONDS = 30
 MSG_CACHE_SWEEP_INTERVAL_SECONDS = 1800
 
+# A MESSAGE_UPDATE whose `edited_timestamp` is older than this is not a fresh
+# user edit but Discord re-sending a previously edited message (e.g. an embed
+# refresh days later) — skip it. Generous enough to survive gateway RESUME
+# replays after a short disconnect.
+EDIT_EVENT_MAX_AGE_SECONDS = 120
+
 # Discord's default per-file upload cap; attachments larger than this are never
 # archived (logged as a URL only, best-effort, may expire).
 ARCHIVE_MAX_BYTES = 8 * 1024 * 1024
@@ -463,6 +469,21 @@ class Palantir(commands.Cog):
         await self._cache_message(message)
         await self._archive_attachments(message)
 
+    @staticmethod
+    def _is_fresh_edit(edited_timestamp: str | None) -> bool:
+        """True iff a MESSAGE_UPDATE payload's `edited_timestamp` marks a user
+        edit that just happened (non-null and within EDIT_EVENT_MAX_AGE_SECONDS)."""
+        if not edited_timestamp:
+            return False
+        try:
+            edited_at = discord.utils.parse_time(edited_timestamp)
+        except ValueError:
+            return False
+        if edited_at is None:
+            return False
+        age = (discord.utils.utcnow() - edited_at).total_seconds()
+        return age <= EDIT_EVENT_MAX_AGE_SECONDS
+
     @commands.Cog.listener()
     async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent) -> None:
         """Raw event so edits of messages no longer in discord.py's connection
@@ -479,10 +500,18 @@ class Palantir(commands.Cog):
         author_data = payload.data.get("author") or {}
         if author_data.get("bot"):
             return
+        # Discord sends the full message object (content included) on *every*
+        # MESSAGE_UPDATE — link unfurls, embed refreshes, pin/flag changes —
+        # so the presence of `content` says nothing about whether a user
+        # edited anything. `edited_timestamp` is the only reliable signal: it
+        # is null for a never-edited message, and stale for a re-sent one. Not
+        # gating on it once flooded the log channel with hundreds of "edits" of
+        # old link-only messages whose embeds Discord re-resolved, none of
+        # which palantir's 14-day cache could refute via the before/after check.
+        if not self._is_fresh_edit(payload.data.get("edited_timestamp")):
+            return
         after_content = payload.data.get("content")
         if after_content is None:
-            # MESSAGE_UPDATE with no content field is an embed-only change (e.g.
-            # a link unfurl or a pin flag) — nothing to log.
             return
 
         cached_msg = payload.cached_message

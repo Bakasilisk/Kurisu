@@ -242,6 +242,8 @@ categories:
 - Message edits/deletes show the pre-change content from palantir's own disk-backed cache,
   capped at 20,000 messages and 14 days per server, oldest evicted/expired automatically —
   not a config option.
+- Only real user edits are logged: an update whose `edited_timestamp` is missing or older
+  than two minutes (link unfurls, embed refreshes of old messages, pin flags) is ignored.
 - Ban/kick/timeout/role-grant actions are attributed to the responsible moderator by name
   via the audit log (requires the *View Audit Log* permission); ban/unban still log
   (unattributed) without it. A deleted message likewise names the moderator who removed it
