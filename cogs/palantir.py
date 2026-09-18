@@ -52,7 +52,14 @@ CATEGORY_COLORS = {
 
 
 def _default_guild_config() -> dict:
-    return {"log_channel_id": None, "disabled_categories": [], "archive_attachments": False}
+    # `enabled` is the on/off switch toggled by `.palantir enable`/`disable`; it
+    # is kept separate from `log_channel_id` so disabling doesn't forget the
+    # channel and re-enabling needs no re-configuration. Both must hold for
+    # anything to be posted (see _should_log / _log).
+    return {
+        "log_channel_id": None, "enabled": True, "disabled_categories": [],
+        "archive_attachments": False,
+    }
 
 
 class Palantir(commands.Cog):
@@ -109,6 +116,8 @@ class Palantir(commands.Cog):
         if not cog_enabled(self.bot, guild.id, "palantir"):
             return False
         guild_conf = self._guild_conf(guild.id)
+        if not guild_conf["enabled"]:
+            return False
         return category not in guild_conf["disabled_categories"]
 
     def _is_log_channel(self, guild: discord.Guild, channel_id: int) -> bool:
@@ -1064,6 +1073,7 @@ class Palantir(commands.Cog):
         disabled = set(guild_conf["disabled_categories"])
         category_lines = "\n".join(f"{'🔴' if c in disabled else '🟢'} {c}" for c in CATEGORIES)
         embed = discord.Embed(title="🔮 Palantir Status", color=discord.Color.dark_purple())
+        embed.add_field(name="Logging", value="On" if guild_conf["enabled"] else "Off", inline=False)
         embed.add_field(name="Log channel", value=channel.mention if channel else "Not set", inline=False)
         embed.add_field(
             name="Archive attachments", value="On" if guild_conf["archive_attachments"] else "Off",
@@ -1120,18 +1130,41 @@ class Palantir(commands.Cog):
         """Set the channel palantir surveillance logs are posted to."""
         guild_conf = self._guild_conf(ctx.guild.id)
         guild_conf["log_channel_id"] = channel.id
+        # Picking a channel is an explicit "turn it on" gesture — don't leave
+        # the user staring at a silent log because an earlier `disable` stuck.
+        guild_conf["enabled"] = True
         self._save_config()
         await self._reply(ctx, f"🔮 Palantir logs will be sent to {channel.mention}.")
 
-    @palantir.command(name="disable", description="Stop palantir logging in this server.")
+    @palantir.command(name="enable", description="Resume palantir logging in this server.")
+    @has_permissions_or_owner(manage_guild=True)
+    @commands.guild_only()
+    async def palantir_enable(self, ctx):
+        """Resume palantir logging to the previously configured channel."""
+        guild_conf = self._guild_conf(ctx.guild.id)
+        guild_conf["enabled"] = True
+        self._save_config()
+        channel_id = guild_conf["log_channel_id"]
+        channel = ctx.guild.get_channel(channel_id) if channel_id else None
+        if channel is None:
+            await self._reply(
+                ctx,
+                "🔮 Palantir logging enabled, but no log channel is set — "
+                "use `palantir setchannel #channel` to pick one.",
+            )
+            return
+        await self._reply(ctx, f"🔮 Palantir logging enabled — posting to {channel.mention}.")
+
+    @palantir.command(name="disable", description="Pause palantir logging in this server.")
     @has_permissions_or_owner(manage_guild=True)
     @commands.guild_only()
     async def palantir_disable(self, ctx):
-        """Stop palantir logging (clears the configured channel)."""
+        """Pause palantir logging. The log channel is remembered, so
+        `palantir enable` resumes without reconfiguration."""
         guild_conf = self._guild_conf(ctx.guild.id)
-        guild_conf["log_channel_id"] = None
+        guild_conf["enabled"] = False
         self._save_config()
-        await self._reply(ctx, "🔮 Palantir logging disabled.")
+        await self._reply(ctx, "🔮 Palantir logging disabled — `palantir enable` resumes it.")
 
     @palantir.command(name="mute", description="Stop logging a category of events.")
     @has_permissions_or_owner(manage_guild=True)

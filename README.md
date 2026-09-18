@@ -257,8 +257,8 @@ All palantir commands require `Manage Server`:
 | Command | Does |
 |---|---|
 | `palantir` / `palantir status` | Show the current configuration |
-| `palantir setchannel #channel` | Set the log channel |
-| `palantir disable` | Turn logging off |
+| `palantir setchannel #channel` | Set the log channel (also turns logging on) |
+| `palantir enable` / `palantir disable` | Resume / pause logging — the channel is remembered across a pause |
 | `palantir mute/unmute <category>` | Suppress/resume one category |
 | `palantir archive <on\|off>` | Toggle attachment archiving |
 

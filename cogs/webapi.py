@@ -685,6 +685,7 @@ class WebAPI(commands.Cog):
         log_channel_id = conf.get("log_channel_id")
         return web.json_response({
             "log_channel": self._channel_json(guild, log_channel_id) if log_channel_id is not None else None,
+            "enabled": bool(conf.get("enabled", True)),
             "archive_attachments": bool(conf.get("archive_attachments", False)),
             "muted_categories": conf.get("disabled_categories", []),
             "cached_messages": cached,

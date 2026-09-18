@@ -403,6 +403,7 @@ Palantir (surveillance/audit logging) **configuration** plus a cached-message **
 ```json
 {
   "log_channel": {"id": "…", "name": "audit-log"},
+  "enabled": true,
   "archive_attachments": false,
   "muted_categories": ["voice"],
   "cached_messages": 4213
@@ -411,6 +412,7 @@ Palantir (surveillance/audit logging) **configuration** plus a cached-message **
 
 - Sourced from `palantir.json` (config) and `palantir_messages.json` (**count only**, via `len()`).
 - `log_channel` — the configured surveillance-log channel, or `null` if unset.
+- `enabled` — the `palantir enable`/`disable` switch (defaults to `true` for a guild that never toggled it). Logging only happens when this is `true` **and** `log_channel` is set; `disable` keeps the channel, so a `false` here with a non-null `log_channel` is "paused", not "unconfigured".
 - `archive_attachments` — whether attachment archiving to `palantir_attachments/` is on for this guild.
 - `muted_categories` — the guild's `disabled_categories` list (e.g. `"messages"`, `"voice"`, `"roles"`, `"modactions"`, `"invites"`, `"server"`, `"members"`, `"tickets"`) — categories currently *not* being logged.
 - `cached_messages` — integer count of messages currently held in palantir's on-disk content cache for this guild (used internally for edit/delete diffing); **never** a preview, sample, or list of the cached entries themselves.
