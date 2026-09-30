@@ -339,10 +339,16 @@ age-restricted channels. No API key needed — AniList's GraphQL API is public a
 
 `/summary` is open to every member and replies privately (only you see it); `.summary` stays
 Manage Server / bot owner only and replies publicly in the channel. Either way it summarizes the
-current channel's last 2 hours or last 100 messages, whichever is smaller — bot messages are
+current channel's last 2 hours or last 100 messages by default, whichever is smaller — bot messages are
 skipped, and the summary is written in whatever language the conversation was in. Powered by
 Anthropic's `claude-opus-5-5`; requires `ANTHROPIC_API_KEY` in `.env` — without it, the command
 replies that it isn't configured instead of running.
+
+Mods and the bot owner can optionally pass `hours` (1–24, out-of-range values are clamped), e.g.
+`.summary 6` or `/summary hours:6`; the window then covers up to 500 messages instead of 100.
+Very long windows may drop the oldest messages to stay within the transcript size cap; the
+embed's footer says how many were truncated. Other members who pass `hours` get a hint and no
+quota is used.
 
 Non-exempt members (everyone but Manage Server/bot owner, who have no limit) are capped at 1
 summary per 12 hours and a server-wide 10 per 24 hours, both rolling windows rather than a

@@ -6,6 +6,7 @@ from datetime import timedelta, timezone
 import anthropic
 import discord
 from anthropic import AsyncAnthropic
+from discord import app_commands
 from discord.ext import commands
 
 from .management import cog_enabled, common_error_reply, format_cooldown, reply_ephemeral_aware
@@ -18,6 +19,10 @@ logger = logging.getLogger(__name__)
 MODEL = "claude-opus-5-5"
 LOOKBACK = timedelta(hours=2)
 MESSAGE_LIMIT = 100
+# Mods/owner may pick their own window via the optional `hours` arg; out-of-range
+# values are clamped, and a custom window gets the higher message limit.
+MAX_LOOKBACK_HOURS = 24
+CUSTOM_MESSAGE_LIMIT = 500
 MIN_MESSAGES = 5
 MAX_MESSAGE_CHARS = 500
 MAX_TOKENS = 6000
@@ -49,6 +54,7 @@ FETCH_FAILED_MESSAGE = "Couldn't read this channel's message history — try aga
 RATE_LIMITED_MESSAGE = "Claude is rate-limiting requests right now — try again in a bit."
 AUTH_FAILED_MESSAGE = "Channel summaries aren't configured correctly — the bot owner needs to check the Anthropic API key."
 SERVICE_FAILED_MESSAGE = "The summary service failed — try again in a moment."
+HOURS_MOD_ONLY_MESSAGE = "Only mods can pick a custom time window — run it without hours for the default 2h."
 PREFIX_MOD_ONLY_MESSAGE = "`.summary` is mod-only — use `/summary` instead; it replies only to you."
 USER_LIMIT_MESSAGE = "You can request another summary in {remaining}."
 GUILD_LIMIT_MESSAGE = "This server has used all {limit} summaries for the last 24h — try again in {remaining}."
@@ -209,7 +215,7 @@ class Summary(commands.Cog):
         if not parts:
             return None
 
-        timestamp = message.created_at.astimezone(timezone.utc).strftime("%H:%M")
+        timestamp = message.created_at.astimezone(timezone.utc).strftime("%d.%m. %H:%M")
         return f"[{timestamp}] {message.author.display_name}: {' '.join(parts)}"
 
     def _build_transcript_lines(self, ctx, messages) -> list[str]:
@@ -232,19 +238,25 @@ class Summary(commands.Cog):
         return lines
 
     @staticmethod
-    def _cap_transcript(lines: list[str]) -> str:
+    def _cap_transcript(lines: list[str]) -> tuple[str, int]:
         """Joins lines into the transcript body, dropping the oldest lines
         first if it's still over TRANSCRIPT_CHAR_LIMIT — keeps the newest
-        (most relevant) activity."""
-        kept = list(lines)
-        body = "\n".join(kept)
-        while kept and len(body) > TRANSCRIPT_CHAR_LIMIT:
-            kept.pop(0)
-            body = "\n".join(kept)
-        return body
+        (most relevant) activity. Returns (body, number of lines kept)."""
+        # Walk from the newest end summing lengths (+1 per joining newline)
+        # rather than popping and re-joining, which is quadratic at 500 lines.
+        total = 0
+        start = len(lines)
+        for i in range(len(lines) - 1, -1, -1):
+            total += len(lines[i]) + (1 if start < len(lines) else 0)
+            if total > TRANSCRIPT_CHAR_LIMIT:
+                break
+            start = i
+        return "\n".join(lines[start:]), len(lines) - start
 
     @staticmethod
-    def _build_embed(text: str, count: int, quota: str | None = None) -> discord.Embed:
+    def _build_embed(
+        text: str, count: int, dropped: int, hours: int, limit: int, quota: str | None = None
+    ) -> discord.Embed:
         description = text
         if len(description) > EMBED_DESC_LIMIT:
             description = description[: EMBED_DESC_LIMIT - 1].rstrip() + "…"
@@ -253,8 +265,9 @@ class Summary(commands.Cog):
         # ping regardless of content, so an injected mention in the model's output
         # (or in the transcript it read) is inert here — no allowed_mentions needed.
         embed = discord.Embed(title="Channel Summary", description=description, color=discord.Color.blurple())
-        hours = int(LOOKBACK.total_seconds() // 3600)
-        footer = f"{count} messages · last {hours}h/{MESSAGE_LIMIT} msgs · {MODEL}"
+        # `dropped` = oldest lines cut by the transcript cap, so the count is honest.
+        shown = f"{count} messages" + (f" (oldest {dropped} truncated)" if dropped else "")
+        footer = f"{shown} · last {hours}h/{limit} msgs · {MODEL}"
         if quota:
             footer += f" · {quota}"
         embed.set_footer(text=footer)
@@ -262,16 +275,35 @@ class Summary(commands.Cog):
 
     # --- Command -----------------------------------------------------------------
 
-    @commands.hybrid_command(name="summary", description="Summarize the last 2 hours (or 100 messages) of this channel.")
+    @commands.hybrid_command(
+        name="summary", description="Summarize this channel's recent activity (default: last 2h / 100 messages)."
+    )
+    @app_commands.describe(hours="Mods only: how many hours back to summarize (1–24)")
     @commands.guild_only()
     @prefix_requires_mod()
     @commands.cooldown(1, COOLDOWN_SECONDS, commands.BucketType.channel)
-    async def summary(self, ctx):
-        """Summarize the last 2 hours (or 100 messages, whichever is fewer) of this channel."""
+    async def summary(self, ctx, hours: int | None = None):
+        """Summarize this channel's recent activity (default: last 2h / 100 messages, whichever is fewer).
+        Mods/owner may pass `hours` (1-24) for a longer window of up to 500 messages."""
         if not self._configured():
             ctx.command.reset_cooldown(ctx)
             await self._reply(ctx, NOT_CONFIGURED_MESSAGE)
             return
+
+        # Only relevant to /summary — `.summary` is already mod-only via
+        # prefix_requires_mod. The gate precedes the in-progress guard so a
+        # refused request never touches channel state.
+        if hours is not None:
+            if not await is_exempt(ctx):
+                ctx.command.reset_cooldown(ctx)
+                await self._reply(ctx, HOURS_MOD_ONLY_MESSAGE)
+                return
+            hours = max(1, min(hours, MAX_LOOKBACK_HOURS))
+            limit = CUSTOM_MESSAGE_LIMIT
+        else:
+            hours = int(LOOKBACK.total_seconds() // 3600)
+            limit = MESSAGE_LIMIT
+        lookback = timedelta(hours=hours)
 
         if ctx.channel.id in self._in_progress:
             # Not reset: a second caller during an in-flight run should still
@@ -298,13 +330,13 @@ class Summary(commands.Cog):
             async with ctx.typing(ephemeral=True):
                 # after=... makes discord.py flip oldest_first to True unless told
                 # otherwise — without this explicit False, a busy channel would
-                # return the OLDEST 100 messages of the 2h window instead of the
-                # newest. newest-first here gives exactly "newest 100 ∩ last 2h";
+                # return the OLDEST messages of the window instead of the
+                # newest. newest-first here gives exactly "newest `limit` ∩ last `hours`h";
                 # _build_transcript_lines reverses it back to chronological order.
-                after = discord.utils.utcnow() - LOOKBACK
+                after = discord.utils.utcnow() - lookback
                 try:
                     messages = [
-                        m async for m in ctx.channel.history(limit=MESSAGE_LIMIT, after=after, oldest_first=False)
+                        m async for m in ctx.channel.history(limit=limit, after=after, oldest_first=False)
                     ]
                 except (discord.Forbidden, discord.HTTPException):
                     logger.warning("Summary: failed to fetch history in channel %s", ctx.channel.id, exc_info=True)
@@ -349,7 +381,8 @@ class Summary(commands.Cog):
                     runs.append(reservation)
                     self._save()
 
-                transcript = f"<transcript>\n{self._cap_transcript(lines)}\n</transcript>"
+                body, kept = self._cap_transcript(lines)
+                transcript = f"<transcript>\n{body}\n</transcript>"
 
                 # Most-specific-first: AuthenticationError and RateLimitError are
                 # both APIStatusError subclasses, so they must be caught before it.
@@ -396,7 +429,7 @@ class Summary(commands.Cog):
                 counted = True
 
                 quota = f"{len(runs)}/{GUILD_DAILY_LIMIT} (24h)" if not exempt else None
-                embed = self._build_embed(text, len(lines), quota=quota)
+                embed = self._build_embed(text, kept, len(lines) - kept, hours, limit, quota=quota)
 
             try:
                 await self._reply(ctx, embed=embed)
