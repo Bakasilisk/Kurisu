@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Deferred-config convention: module constants, no live config command (tune
 # later if real usage justifies it).
-MODEL = "claude-opus-5"
+MODEL = "claude-opus-5-5"
 LOOKBACK = timedelta(hours=2)
 MESSAGE_LIMIT = 100
 MIN_MESSAGES = 5
@@ -357,7 +357,7 @@ class Summary(commands.Cog):
                     response = await self._get_client().messages.create(
                         model=MODEL,
                         max_tokens=MAX_TOKENS,
-                        output_config={"effort": "low"},
+                        output_config={"effort": "medium"},
                         system=SYSTEM_PROMPT,
                         messages=[{"role": "user", "content": transcript}],
                     )

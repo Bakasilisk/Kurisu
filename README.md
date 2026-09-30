@@ -341,7 +341,7 @@ age-restricted channels. No API key needed — AniList's GraphQL API is public a
 Manage Server / bot owner only and replies publicly in the channel. Either way it summarizes the
 current channel's last 2 hours or last 100 messages, whichever is smaller — bot messages are
 skipped, and the summary is written in whatever language the conversation was in. Powered by
-Anthropic's `claude-opus-5`; requires `ANTHROPIC_API_KEY` in `.env` — without it, the command
+Anthropic's `claude-opus-5-5`; requires `ANTHROPIC_API_KEY` in `.env` — without it, the command
 replies that it isn't configured instead of running.
 
 Non-exempt members (everyone but Manage Server/bot owner, who have no limit) are capped at 1
