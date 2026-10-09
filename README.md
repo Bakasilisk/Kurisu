@@ -41,6 +41,12 @@ requires Manage Server (or the bot owner) — see [Summary](#summary).
 The economy sinks (`slots`) are prefix-only and public, matching the rest of the economy
 cog. The other cogs are prefix-only.
 
+Wherever a table lists a permission, the bot owner account can also run the command —
+except verification, cerberus, and `feature`, which check the permission strictly. A bare
+group command falls back to something sensible: help for `.cog`/`.feature`/`.ticket`,
+status for `.modlog`/`.palantir`/`.ticket channel`, the server overview for `.stats`; under
+`/` these are explicit subcommands (`/cog help`, `/modlog show`, …).
+
 Command names, subcommand names, and keyword arguments chosen from a fixed set (`stats top`'s
 `period`, cog/feature names, `cerberus mode`, palantir's categories) are case-insensitive —
 `.stats User`, `.STATS top Week`, and `.Cog Reload Stats` all work the same as their lowercase
@@ -71,18 +77,20 @@ Auto-replies on every message:
 | `kick <member> [reason]` | Kick a member | Kick Members |
 | `ban <member> [reason]` | Ban a member | Ban Members |
 | `unban <user> [reason]` | Unban by ID or exact username | Ban Members |
-| `timeout` / `mute <member> <duration> [reason]` | Time out (e.g. `10m`, `2h`, `1d`) | Moderate Members |
+| `timeout` / `mute <member> <duration> [reason]` | Time out (e.g. `10m`, `2h`, `1d`; max 28 days) | Moderate Members |
 | `untimeout` / `unmute <member> [reason]` | Remove an active timeout | Moderate Members |
 | `warn <member> [reason]` | Warn a member and record it | Moderate Members |
 | `warnings` / `warnlist <member>` | List a member's warnings | Moderate Members |
 | `clearwarnings <member>` | Clear a member's warnings | Moderate Members |
-| `purge` / `clear <amount> [member]` | Bulk-delete messages | Manage Messages |
-| `slowmode <seconds>` | Set the channel's slowmode | Manage Channels |
+| `purge` / `clear <amount> [member]` | Bulk-delete messages (1-100) | Manage Messages |
+| `slowmode <seconds>` | Set the channel's slowmode (0-21600) | Manage Channels |
 | `lock` / `unlock [reason]` | Block/restore @everyone sending in the channel | Manage Channels |
 | `modlog` / `modlog set #channel` / `modlog disable` | Show/set/disable the mod-log channel | Manage Server |
 
-- Each command requires its permission on both the caller and the bot, and enforces
-  role-hierarchy checks so members can't act on others with an equal or higher role.
+- Each command requires its permission on the caller; kick/ban/timeout/purge/slowmode also
+  require the same permission on the bot, and `lock`/`unlock` require Manage Roles on it.
+  Commands acting on a member enforce role-hierarchy checks so members can't act on others
+  with an equal or higher role.
 - Every action is recorded to `logs/kurisu.log` and to the mod-log channel if one is
   configured — so ephemeral slash actions are still traceable.
 - `lock`/`unlock` snapshot each channel's exact pre-lock permission state (persisted, so it
@@ -94,15 +102,16 @@ Auto-replies on every message:
 ### Leveling
 
 Members earn 15-25 XP per message (5 min cooldown to prevent spam farming), with an
-announcement on level-up. Per-member message counts reset monthly. Channels, categories,
-and threads can be excluded from leveling entirely — messages there earn no XP and aren't
-counted at all; excluding a category excludes every channel under it, and excluding a
-text/forum channel excludes its threads.
+announcement on level-up. Per-member message counts reset monthly. Text channels, voice
+channels, categories, and threads can be excluded from leveling entirely — messages there
+earn no XP and aren't counted at all; excluding a category excludes every channel under it,
+and excluding a text channel excludes its threads. A forum channel can't be excluded
+directly — exclude its category or its individual threads.
 
 | Command | Does | Requires |
 |---|---|---|
 | `rank` / `level [member]` | Level, XP, server rank, and messages sent today | — |
-| `leaderboard` / `lb` / `top [count]` | The server's top members | — |
+| `leaderboard` / `lb` / `top [count]` | The server's top members (`count` 1-9, a 3x3 grid) | — |
 | `resetxp <member>` | Clear a member's progress | Moderate Members |
 | `setxp <member> <amount>` | Set a member's XP directly | Moderate Members |
 | `xpignore` | List channels/categories/threads excluded from earning XP | Manage Server |
@@ -117,7 +126,7 @@ A simple bits currency, tracked per server.
 |---|---|---|
 | `payday` / `daily` | Collect 100 bits once every 20 hours, +25 bits per consecutive day (capped at day 7, 250 bits/day); claiming again within 48 hours of the last one extends the streak, a later claim resets it; shows the new balance, server rank, and streak, or the time remaining if already claimed | — |
 | `balance` / `bal [member]` | Check bits without claiming | — |
-| `richest [count]` | The server's top bit holders | — |
+| `richest [count]` | The server's top bit holders (`count` defaults to 10, max 25) | — |
 | `give <member> <amount>` | Transfer bits to another member | — |
 | `coinflip` / `cf <amount>` | Bet bits on a coin flip (10-1000 bits) | — |
 | `slots <amount>` | Bet bits on the slot machine (10-250 bits); triples pay out up to 150x, exact pairs push | — |
@@ -138,7 +147,7 @@ and member joins/leaves — in a local SQLite database (`stats.db`, path configu
 | `stats activity [period]` | Peak hour/weekday summary plus an hour×weekday heatmap image | — |
 | `stats voice [period] [n]` | Top members by voice time | — |
 | `stats growth [period]` | Joins/leaves/net alongside message activity | — |
-| `stats quietest [n]` | Least-active members | Manage Server |
+| `stats quietest [n]` | Least-active members over the last 30 days | Manage Server |
 | `stats backfill [days]` | Seed history from existing message logs | Manage Server |
 | `stats reset confirm` | Erase all of this server's stats | Manage Server |
 
@@ -185,16 +194,17 @@ none are online). Ships **in shadow mode by default**: it detects and alerts, bu
 action until a mod runs `.cerberus mode active`. Detects:
 
 - **Pattern A (sleeper raid/scam bursts):** an account posting in 4+ distinct channels within
-  20 seconds while mentioning a role above a member-count threshold (auto-detected as
-  "high-value" — no manual role list to maintain; `@everyone`/`@here` always counts).
+  20 seconds while mentioning a mentionable role holding the greater of 25 members or 30% of
+  the server (auto-detected as "high-value" — no manual role list to maintain;
+  `@everyone`/`@here` always counts).
 - **Pattern B (flooding):** 5+ messages in 5 seconds, or 10+ in 30 seconds, from one account.
 - **Duplicate-content wave:** the same link/image/text posted by 3+ distinct accounts within
   60 seconds, even when each account individually stays under its own threshold — catches
   raids that spread load thin across many accounts.
 
-Response (in active mode) is always **timeout, then delete, then alert** — never an outright
-ban, to bound the damage of a false positive. A failed timeout (e.g. the account's role sits
-above the bot's) produces a loud, distinct alert rather than failing silently.
+Response (in active mode) is always a **1-hour timeout, then delete, then alert** — never an
+outright ban, to bound the damage of a false positive. A failed timeout (e.g. the account's role
+sits above the bot's) produces a loud, distinct alert rather than failing silently.
 
 If 2+ accounts independently trip Pattern A, or 3+ post duplicate content, within 60 seconds
 of each other, cerberus also triggers a temporary **lockdown**: `@everyone` loses send
@@ -230,7 +240,7 @@ categories:
 
 | Category | Covers |
 |---|---|
-| `members` | Joins (with account age and the invite used), leaves, nickname changes |
+| `members` | Joins (with account age and, if the bot has Manage Server, the invite used), leaves, nickname changes |
 | `messages` | Edits, deletes, and bulk deletes |
 | `roles` | Role create/delete/edit; a member's roles changing |
 | `voice` | Voice channel join/leave/move (mute/deafen ignored) |
@@ -250,7 +260,8 @@ categories:
   when a mod deletes another member's message (best-effort via the audit log).
 - Attachment archiving is a runtime toggle, default off: when on, attached files are
   downloaded to `palantir_attachments/` on post and re-uploaded on delete so they survive
-  Discord's CDN URL expiry, instead of a possibly-expired URL.
+  Discord's CDN URL expiry, instead of a possibly-expired URL. Files over 8 MiB are skipped
+  and logged as a URL only.
 
 All palantir commands require `Manage Server`:
 
@@ -279,8 +290,8 @@ text needs no quoting with either `.` or `/` (e.g. `makima`, `denji`). A command
 one text field (e.g. `nanachi`) needs quotes around multi-word text with `.` (`.nanachi "Serves
 you right." "Your ambition ends here."`) since there's no other way to tell where one field ends
 and the next begins; `/` never needs quoting since each field is its own option. Text is
-auto-wrapped and shrunk to fit its region; a template with a missing/unreadable base image
-replies with an error instead of crashing.
+auto-wrapped and shrunk to fit its region (200 characters max per field); a template with a
+missing/unreadable base image replies with an error instead of crashing.
 
 Each image's blank text area is defined in code as a `Region(box=(x1, y1, x2, y2))` in
 `cogs/captions.py` — **two pixel points**, not four independent values: `(x1, y1)` is the
@@ -307,21 +318,23 @@ like `nanachi`. Review the output image before wiring it into a `Template`.
 ### AI Detect
 
 `.aicheck` / `/aicheck [url]` estimates whether an image is AI-generated, via the Sightengine
-`genai` model — attach an image, pass a URL, or reply to an image message. Right-click a message
-→ **Apps** → **Check if AI** does the same without a command. Results (a percentage + verdict)
-always post publicly. Requires `SIGHTENGINE_API_USER` / `SIGHTENGINE_API_SECRET` in `.env` (a
-free account at [sightengine.com](https://sightengine.com)); without them, the command replies
-that detection isn't configured instead of scoring. It's a probabilistic estimate, not proof.
+`genai` model — attach an image, pass a URL, or reply to an image message (25 MB max).
+Right-click a message → **Apps** → **Check if AI** does the same without a command. Results (a
+percentage + verdict) always post publicly. Requires `SIGHTENGINE_API_USER` /
+`SIGHTENGINE_API_SECRET` in `.env` (a free account at [sightengine.com](https://sightengine.com));
+without them, the command replies that detection isn't configured instead of scoring. It's a
+probabilistic estimate, not proof.
 
 ### Trace Anime
 
 `.trace` / `/trace [url]` reverse-searches a screenshot against trace.moe's scene index — attach
-an image, pass a URL, or reply to an image message. Right-click a message → **Apps** → **Trace
-anime** does the same without a command. Results (always posted publicly) show the anime title,
-episode, timestamp, similarity, a scene thumbnail, a muted preview clip when small enough to
-upload, and up to two runner-up matches; a match below 87% similarity is flagged as low
-confidence. Adult titles have their thumbnail/clip hidden outside age-restricted channels. Works
-anonymously; an optional `TRACE_MOE_API_KEY` in `.env` raises trace.moe's rate limit.
+an image, pass a URL, or reply to an image message (25 MB max). Right-click a message →
+**Apps** → **Trace anime** does the same without a command. Results (always posted publicly)
+show the anime title, episode, timestamp, similarity, a scene thumbnail, a muted preview clip
+when small enough to upload, and up to two runner-up matches; a match below 87% similarity is
+flagged as low confidence. Adult titles have their thumbnail/clip hidden outside age-restricted
+channels. Works anonymously; an optional `TRACE_MOE_API_KEY` in `.env` raises trace.moe's rate
+limit.
 
 ### AniList
 
@@ -339,10 +352,11 @@ age-restricted channels. No API key needed — AniList's GraphQL API is public a
 
 `/summary` is open to every member and replies privately (only you see it); `.summary` stays
 Manage Server / bot owner only and replies publicly in the channel. Either way it summarizes the
-current channel's last 2 hours or last 100 messages by default, whichever is smaller — bot messages are
-skipped, and the summary is written in whatever language the conversation was in. Powered by
-Anthropic's `claude-opus-5-5`; requires `ANTHROPIC_API_KEY` in `.env` — without it, the command
-replies that it isn't configured instead of running.
+current channel's last 2 hours or last 100 messages by default, whichever is smaller — bot
+messages are skipped (fewer than 5 non-bot messages in the window and it declines), and the
+summary is written in whatever language the conversation was in. Powered by Anthropic's
+`claude-opus-5-5`; requires `ANTHROPIC_API_KEY` in `.env` — without it, the command replies that
+it isn't configured instead of running.
 
 Mods and the bot owner can optionally pass `hours` (1–24, out-of-range values are clamped), e.g.
 `.summary 6` or `/summary hours:6`; the window then covers up to 500 messages instead of 100.
@@ -369,8 +383,8 @@ cents.
 Delivery pings you in the channel the reminder was set in; if that fails (channel deleted, no
 permission, …) it falls back to a DM. A reminder that comes due while the bot is offline still
 fires — late by more than two minutes, it's delivered with an apology — checked on a 30-second
-tick, so delivery can lag up to that long. Durations can't exceed 90 days; each member can have
-at most 10 pending reminders at once.
+tick, so delivery can lag up to that long. Durations can't exceed 90 days and reminder text 500
+characters; each member can have at most 10 pending reminders at once.
 
 ### Tickets
 
@@ -393,8 +407,9 @@ deliberately if that distinction matters to you.
 Mod subcommands (`reply`, `close`, `list`, `show`) run with the `.` prefix are only accepted
 inside the configured ticket channel, since a prefix invocation leaves the command (and the
 mod's name) visible in whatever channel it was typed in; the `/` version works anywhere and
-always replies privately. The `channel …` config commands have no such restriction. Opening a ticket is the same either way: `/ticket open` keeps the request private,
-`.ticket open` posts it (and its echo) in the channel it's run in.
+always replies privately. The `channel …` config commands have no such restriction. Opening a
+ticket is the same either way bar attachments: `/ticket open` keeps the request private but drops
+any attached files, while `.ticket open` posts it (and its echo) in the channel it's run in.
 
 Once a ticket is open, plain DMs to the bot are automatically forwarded into it — no command
 needed. A member with open tickets on several servers instead uses
@@ -404,8 +419,8 @@ as links, since Discord's CDN URLs expire. The user must allow direct messages f
 members, or replies can't reach them — the bot warns about this when a ticket is opened.
 
 Limits: one open ticket per member per server, 1500 characters per message, 200 messages per
-ticket, and one DM every 5 seconds. Closed tickets are kept for 30 days, after which they no
-longer show up in `ticket show`. Like other cogs, tickets can be disabled per server with
+ticket, and one DM every 5 seconds. Closed tickets are kept for 30 days, then deleted from
+`tickets.json`. Like other cogs, tickets can be disabled per server with
 `.feature disable tickets`.
 
 A member-facing walkthrough of the same system — written to be pinned in a server rather than
@@ -452,7 +467,7 @@ Bot administration from Discord. Owner-only (bot owner account):
 | `sync` | Re-sync slash commands with Discord |
 | `guilds` | List the servers the bot is in |
 | `leave [guild_id]` | Leave a server (the current one when no ID is given) |
-| `presence [text]` | Set the bot's status text (no text clears it) |
+| `presence [text]` | Set the bot's status text, persisted across restarts (no text, or `clear`, clears it) |
 | `shutdown` | Shut the bot down cleanly |
 
 Server admins (`Manage Server`):
@@ -479,8 +494,8 @@ unloaded across restarts, and `management` itself can't be unloaded.
 
 An HTTP/JSON API (`cogs/webapi.py`), read-only except `POST .../export`, for a separate web
 frontend — mirrors the `stats` cog's queries as JSON instead of Discord embeds, plus
-name/avatar resolution from the bot's live cache. Infra, not a per-guild toggleable cog (like
-management/help). Full request/response reference in [API.md](API.md).
+name/avatar resolution from the bot's live cache. Infra: it appears in `.feature`, but toggling
+it there has no effect. Full request/response reference in [API.md](API.md).
 
 Requires `WEBAPI_KEY` in `.env` (comma-separated to accept multiple keys during rotation) — every
 request needs a matching `X-API-Key` header, or the server doesn't start at all. Binds to
@@ -531,12 +546,13 @@ manual setup needed:
 | File | Holds |
 |---|---|
 | `warnings.json`, `channel_locks.json`, `mod_log.json` | Warnings, pre-lock permission snapshots, mod-log channel |
-| `xp.json`, `messages.json` | XP, monthly message counts |
+| `xp.json`, `messages.json`, `leveling_exclude.json` | XP, monthly message counts, XP-excluded targets |
 | `economy.json` | Bits balances |
 | `verification.json` | Verification role configuration |
 | `cerberus.json` | Cerberus config, including active lockdown state |
 | `palantir.json`, `palantir_messages.json` | Palantir config, message cache |
 | `management.json` | Unloaded extensions, per-guild feature toggles |
+| `summary.json` | Summary rate-limit state |
 | `reminders.json` | Pending reminders |
 | `tickets.json` | Ticket channel per server, open/closed tickets with transcripts |
 | `stats.db` | Server statistics (SQLite — the one non-JSON data file) |
@@ -559,15 +575,21 @@ archiving is turned on.
      ```bash
      cp .env.example .env
      ```
-   - Open `.env` and replace `your_bot_token_here` with your actual Discord Bot Token.
+   - Open `.env` and replace `DISCORD_TOKEN`'s `your_bot_token_here` with your actual Discord
+     Bot Token.
    - Optionally, set `SIGHTENGINE_API_USER` / `SIGHTENGINE_API_SECRET` (free account at
      [sightengine.com](https://sightengine.com)) to enable the [AI Detect](#ai-detect) `.aicheck`
      command; leave them blank to skip it.
    - Optionally, set `TRACE_MOE_API_KEY` to raise the rate limit for [Trace Anime](#trace-anime)'s
      `.trace` command; it works anonymously without one.
+   - Optionally, set `ANTHROPIC_API_KEY` to enable [Summary](#summary)'s `.summary` / `/summary`;
+     leave it blank to skip it.
+   - Optionally, set `STATS_DB_PATH` to keep `stats.db` somewhere other than next to the code.
    - Optionally, set `WEBAPI_KEY` (plus `WEBAPI_HOST`/`WEBAPI_PORT` if not using the defaults) to
      enable the [Web API](#web-api) cog for a separate web frontend; leave `WEBAPI_KEY` blank to
      skip it.
+   - Optionally, set `EXPORT_WEB_URL` to that frontend's base URL, so [Export](#export)'s
+     too-large-for-DM hint links straight to the download page instead of just naming it.
 
 3. **Invite the Bot to your Server:**
    - In the Developer Portal, go to **OAuth2** -> **URL Generator**.
@@ -582,6 +604,7 @@ archiving is turned on.
      - `Kick Members`, `Ban Members`, `Moderate Members`, `Manage Messages`, `Manage Channels`,
        `Manage Roles` (needed for the moderation commands, `lock`/`unlock`, verification's
        role grants, and cerberus's lockdown mechanism)
+     - `Manage Server` (needed for palantir to name the invite a member joined through)
      - `View Audit Log` (needed for palantir to attribute ban/kick/timeout/role-grant actions
        to the responsible moderator by name)
    - Copy the generated URL and open it in your browser to invite the bot to your server.
@@ -599,7 +622,8 @@ archiving is turned on.
      python bot.py
      ```
    - Or use the bundled `./runbot.sh`, which does the venv setup, dependency install, and
-     launch in one step.
+     launch in one step — on a first run with no `.env` it creates one and exits, so fill in
+     your token and run it again.
 
 ## Running as a Background Service (systemd)
 
@@ -620,7 +644,8 @@ it stops the moment you disconnect. To keep it running on a server after an SSH 
    sudo systemctl daemon-reload
    sudo systemctl enable --now kurisu
    ```
-   `enable --now` starts the bot immediately and again on every future boot.
+   `enable --now` starts the bot immediately and again on every future boot. Create `.env`
+   first: without it `runbot.sh` exits at once and systemd retries every 5 seconds.
 
 3. **Check status and logs:**
    ```bash

@@ -135,12 +135,12 @@ def _clamp_weeks(value) -> int:
 
 def _web_hint(guild_id: int) -> str:
     """Text pointing at where the finished export can be picked up if it can't be DM'd — always
-    names the 60-minute window."""
+    names the RESULT_TTL_SECONDS window."""
     if EXPORT_WEB_URL:
         where = f"{EXPORT_WEB_URL}/guild/{guild_id}/moderation"
     else:
         where = "the Moderation page of the web dashboard"
-    return f"you can download it from {where} within 60 minutes"
+    return f"you can download it from {where} within {RESULT_TTL_SECONDS // 60} minutes"
 
 
 @dataclass
@@ -454,15 +454,19 @@ class Export(commands.Cog):
     @commands.hybrid_command(
         name="export",
         description=f"Export the last {EXPORT_DEFAULT_WEEKS} weeks of messages as CSV (Manage Server only).",
+        # `help=` rather than a docstring: an f-string literal isn't a docstring, and the window
+        # and TTL below must track EXPORT_DEFAULT_WEEKS / RESULT_TTL_SECONDS.
+        help=(
+            f"Scan every readable channel and thread (active/archived, including forum posts) for "
+            f"the last {EXPORT_DEFAULT_WEEKS} weeks of messages and DM the requester a CSV. One "
+            f"export job runs per guild at a time; a finished job stays available (one Discord DM, "
+            f"or the web dashboard) for {RESULT_TTL_SECONDS // 60} minutes."
+        ),
     )
     @app_commands.default_permissions(manage_guild=True)
     @has_permissions_or_owner(manage_guild=True)
     @commands.guild_only()
     async def export(self, ctx):
-        """Scan every readable channel and thread (active/archived, including forum posts) for
-        the last 4 weeks of messages and DM the requester a CSV. One export job runs per guild at
-        a time; a finished job stays available (one Discord DM, or the web dashboard) for 60
-        minutes."""
         guild = ctx.guild
 
         async def _on_done(job: ExportJob) -> None:
@@ -480,8 +484,8 @@ class Export(commands.Cog):
         else:
             await self._reply(
                 ctx,
-                "Export started — scanning every readable channel and thread for the last 4 weeks. "
-                "I'll DM you the CSV when it's done.",
+                f"Export started — scanning every readable channel and thread for the last "
+                f"{EXPORT_DEFAULT_WEEKS} weeks. I'll DM you the CSV when it's done.",
             )
 
 
