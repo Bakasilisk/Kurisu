@@ -1083,9 +1083,7 @@ class Palantir(commands.Cog):
         return embed
 
     async def cog_check(self, ctx):
-        if ctx.guild is None or await self.bot.is_owner(ctx.author):
-            return True
-        return cog_enabled(self.bot, ctx.guild.id, "palantir")
+        return ctx.guild is None or cog_enabled(self.bot, ctx.guild.id, "palantir")
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, (commands.MissingPermissions, commands.CheckAnyFailure)):

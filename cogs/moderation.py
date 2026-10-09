@@ -78,9 +78,7 @@ class Moderation(commands.Cog):
         save_json_atomic(MODLOG_FILE, self.mod_log_channels)
 
     async def cog_check(self, ctx):
-        if ctx.guild is None or await self.bot.is_owner(ctx.author):
-            return True
-        return cog_enabled(self.bot, ctx.guild.id, "moderation")
+        return ctx.guild is None or cog_enabled(self.bot, ctx.guild.id, "moderation")
 
     async def _hierarchy_error(self, ctx, member, verb: str) -> str | None:
         """Return an error string if the actor or the bot can't act on `member`

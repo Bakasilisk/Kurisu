@@ -709,9 +709,7 @@ class Stats(commands.Cog):
         return False
 
     async def cog_check(self, ctx):
-        if ctx.guild is None or await self.bot.is_owner(ctx.author):
-            return True
-        return cog_enabled(self.bot, ctx.guild.id, "stats")
+        return ctx.guild is None or cog_enabled(self.bot, ctx.guild.id, "stats")
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MemberNotFound):
