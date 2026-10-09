@@ -72,6 +72,7 @@ INITIAL_EXTENSIONS = [
     "cogs.reminders",
     "cogs.tickets",
     "cogs.export",
+    "cogs.misc",
     "cogs.webapi",
 ]
 

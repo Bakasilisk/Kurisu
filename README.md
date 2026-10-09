@@ -22,6 +22,7 @@ local SQLite database (`stats.db`) for server statistics. Command prefix is `.`.
   [Reminders](#reminders) ·
   [Tickets](#tickets) ·
   [Export](#export) ·
+  [Misc](#misc) ·
   [Web API](#web-api) ·
   [Help](#help) ·
   [Management](#management) ·
@@ -449,6 +450,14 @@ whole CSV is built in RAM, so this is a real ceiling on a busy server, not a for
 
 **This CSV contains raw message content** — handle the downloaded file the same way you'd
 handle any export of your members' messages.
+
+### Misc
+
+Small standalone commands that don't fit any other feature; toggle with `.feature disable misc`.
+
+| Command | Does |
+|---|---|
+| `avi [user]` (aliases `avatar`, `pfp`) | Posts a user's profile picture at full size (yours by default; server avatar if set) |
 
 ### Help
 
