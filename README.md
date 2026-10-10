@@ -514,6 +514,7 @@ frontend on the same host calls it over localhost.
 | Endpoint | Returns |
 |---|---|
 | `GET /api/meta` | Bot owner id, guild count |
+| `GET /api/health` | Uptime, gateway latency, per-cog load state, data-file sizes — bot-wide, owner-tier |
 | `GET /api/guilds` | Tracked guilds (id/name/icon) |
 | `GET /api/guilds/{id}/overview` | Server totals, trend |
 | `GET /api/guilds/{id}/top` \| `/channels` \| `/voice` | Ranked lists (`period=week/month/year/all`, optional `limit=N`) |
@@ -529,6 +530,8 @@ frontend on the same host calls it over localhost.
 | `GET /api/guilds/{id}/verification` | Verification role/welcome-channel config, spicy/mod-tier |
 | `GET /api/guilds/{id}/moderation` | Mod-log channel + currently-locked channels, spicy/mod-tier (restoration snapshots never exposed) |
 | `GET /api/guilds/{id}/features` | Per-guild `.feature` cog toggle state, spicy/mod-tier |
+| `GET /api/guilds/{id}/channels/{cid}` | One channel: totals, share, trend, daily/weekly series, top posters (`limit`, default 10), weekday split |
+| `GET /api/guilds/{id}/members/{uid}/series` | One member's messages and voice time per day/week (`period`, default `year`) |
 | `GET /api/users/{uid}/reminders` | A user's own pending reminders — not guild-scoped |
 | `POST /api/guilds/{id}/export` | Start an export job for this guild (mod-only, live-checked) |
 | `GET /api/guilds/{id}/export` | Current/last export job status for this guild |
@@ -539,8 +542,10 @@ balance/rank.
 
 A third sensitivity tier, `self`, exists alongside harmless/spicy: `self`-tier data (currently
 just reminders) is scoped to one specific user, not readable by other members or by mods —
-`{uid}` must come from the calling consumer's own authenticated session, never user input. Full
-tier semantics are in [API.md](API.md).
+`{uid}` must come from the calling consumer's own authenticated session, never user input. A
+fourth tier, `owner`, covers bot-wide runtime state (currently just `/api/health`): not
+guild-scoped, and only for the bot owner. Like `self`, it is enforced by the consumer, not the
+bot. Full tier semantics are in [API.md](API.md).
 
 ### Logging & data files
 

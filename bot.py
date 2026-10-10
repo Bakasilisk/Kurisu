@@ -2,6 +2,7 @@ import asyncio
 import logging
 import logging.handlers
 import os
+from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
@@ -118,6 +119,9 @@ async def on_command_error(ctx, error):
 
 async def main():
     async with bot:
+        # Read by the webapi cog's /api/health (uptime, cogs that failed to load).
+        bot.started_at = datetime.now(timezone.utc)
+        bot.failed_extensions = {}
         disabled = globally_disabled_extensions()
         for extension in INITIAL_EXTENSIONS:
             if extension in disabled and extension != "cogs.management":
@@ -125,8 +129,9 @@ async def main():
                 continue
             try:
                 await bot.load_extension(extension)
-            except commands.ExtensionError:
+            except commands.ExtensionError as e:
                 logger.exception("Failed to load extension %s", extension)
+                bot.failed_extensions[extension] = f"{type(e).__name__}: {e}"
         try:
             await bot.start(TOKEN)
         except discord.PrivilegedIntentsRequired:

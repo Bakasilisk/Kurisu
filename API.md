@@ -14,17 +14,20 @@ This is a **trusted server-to-server API with no per-user authorization**. A val
 
 ### Sensitivity tiers
 
-Every endpoint carries a documented sensitivity tier, `harmless`, `spicy`, or `self`, to support a **future** per-user access layer: any member would be able to read `harmless` data (their own and others' chat activity and gamification stats), `spicy` data (moderation actions, security posture, surveillance state, server setup/config) stays mod-only, and `self` data is visible only to the specific user it belongs to.
+Every endpoint carries a documented sensitivity tier, `harmless`, `spicy`, `self`, or `owner`, to support a **future** per-user access layer: any member would be able to read `harmless` data (their own and others' chat activity and gamification stats), `spicy` data (moderation actions, security posture, surveillance state, server setup/config) stays mod-only, `self` data is visible only to the specific user it belongs to, and `owner` data is visible only to the bot owner.
 
 `self`-tier data isn't member-readable (not `harmless` — it's not meant for anyone-about-anyone) and isn't mod-readable (not `spicy` — a mod has no special claim to another user's personal data). A consumer must derive `{uid}` exclusively from its own authenticated session (exactly as kurisu-web's `/me` flow does today), **never** from user-supplied input — there is no guild-membership or moderator check that could substitute for that, since these endpoints aren't guild-scoped at all.
 
-**Today, this tier is documentation and response-shape structure only** — it is *not yet enforced* by the API itself. Enforcement currently happens frontend-side (kurisu-web's own guild-scoping, and — for `self` — its own-session `{uid}` derivation) or is expected to happen server-to-server (a trusted consumer decides who sees what); `cogs/webapi.py` does not itself check a per-user role before answering a request. Treat the tier as a contract for how a future auth layer will gate these endpoints, and as a hard rule for this cog's own design: **a spicy field must never be nested inside a harmless endpoint's response** — e.g. warnings are deliberately not part of `/members/{uid}`, they live solely on the spicy `/warnings` endpoint, so that a future harmless-only auth scope can safely expose `/members/{uid}` wholesale without a field-level allowlist. The same isolation applies to `self`: a `self`-tier field must never be nested inside a `harmless` or `spicy` response either.
+`owner`-tier data is bot-wide runtime state (currently just `/health`): it isn't about any guild, so neither a guild's admins nor its members have a claim to it. Like `self`, it isn't guild-scoped, and the consumer gates it — kurisu-web shows it only to a session whose user matched `/meta`'s `owner_id` at login.
+
+**Today, this tier is documentation and response-shape structure only** — it is *not yet enforced* by the API itself. Enforcement currently happens frontend-side (kurisu-web's own guild-scoping, for `self` its own-session `{uid}` derivation, and for `owner` its session owner check) or is expected to happen server-to-server (a trusted consumer decides who sees what); `cogs/webapi.py` does not itself check a per-user role before answering a request. Treat the tier as a contract for how a future auth layer will gate these endpoints, and as a hard rule for this cog's own design: **a spicy field must never be nested inside a harmless endpoint's response** — e.g. warnings are deliberately not part of `/members/{uid}`, they live solely on the spicy `/warnings` endpoint, so that a future harmless-only auth scope can safely expose `/members/{uid}` wholesale without a field-level allowlist. The same isolation applies to `self` and `owner`: a field of either tier must never be nested inside a response of another tier.
 
 | Endpoint | Tier |
 |---|---|
-| `/meta`, `/guilds`, `/overview`, `/growth`, `/top`, `/channels`, `/voice`, `/leveling`, `/economy`, `/members/{uid}` | harmless |
+| `/meta`, `/guilds`, `/overview`, `/growth`, `/top`, `/channels`, `/channels/{cid}`, `/voice`, `/leveling`, `/economy`, `/members/{uid}`, `/members/{uid}/series` | harmless |
 | `/activity`, `/quietest`, `/warnings`, `/security`, `/palantir`, `/verification`, `/moderation`, `/features`, `/export`, `/export/download` | spicy |
 | `/users/{uid}/reminders` | self |
+| `/health` | owner |
 
 Note: `/activity` is tiered **spicy** here by deliberate API-side operator choice, even though the bot's own `.stats activity` command is open to every member in the Discord UI. The two don't have to match — the API's tiering is a separate, intentionally more conservative decision (fine-grained hour×weekday activity patterns are treated as more sensitive in aggregate/API form than a one-off Discord command reply).
 
@@ -34,7 +37,7 @@ Which cogs' data is surfaced through this API, and which are deliberately left o
 
 | Cog | Surfaced | Notes |
 |---|---|---|
-| stats | yes (existing) | `overview`/`top`/`channels`/`activity`/`voice`/`growth`/`members/{uid}`/`quietest` |
+| stats | yes (existing) | `overview`/`top`/`channels`/`channels/{cid}`/`activity`/`voice`/`growth`/`members/{uid}`/`members/{uid}/series`/`quietest` |
 | leveling | yes | `/leveling` + member enrichment |
 | economy | yes | `/economy` + member enrichment |
 | moderation | yes (spicy) | `/warnings` (warnings) + `/moderation` (mod-log channel + locked-channel list; restoration snapshots never exposed) |
@@ -46,6 +49,7 @@ Which cogs' data is surfaced through this API, and which are deliberately left o
 | anilist, triggers, captions, aidetect, trace | no | stateless — nothing persisted |
 | management | config only (spicy) | `/features` — per-guild `.feature` toggle state, one entry per toggleable cog; global disable state also surfaced |
 | help, webapi | no | infra cogs — nothing persisted worth surfacing |
+| bot / runtime | yes (owner) | `/health` — uptime, gateway latency, per-cog load state, data-file sizes; never file contents |
 
 ### Authentication
 
@@ -69,8 +73,10 @@ Errors are JSON objects with a single `error` string:
 |---|---|---|
 | `400` | `{"error": "invalid guild id"}` | `{gid}` is not an integer |
 | `400` | `{"error": "invalid user id"}` | `{uid}` is not an integer |
+| `400` | `{"error": "invalid channel id"}` | `{cid}` is not an integer |
 | `401` | `{"error": "unauthorized"}` | missing/invalid `X-API-Key` |
 | `404` | `{"error": "unknown guild"}` | the bot is not in guild `{gid}` (or it isn't cached) |
+| `404` | `{"error": "unknown channel"}` | `/channels/{cid}`: the channel is neither in the guild's cache nor in this guild's recorded stats |
 | `400` | `{"error": "invalid json"}` | export start: the POST body isn't valid JSON |
 | `400` | `{"error": "invalid requested_by"}` | export start: `requested_by` in the body isn't an integer |
 | `403` | `{"error": "not permitted"}` | export start: `requested_by` is neither the bot owner nor a current member with Manage Server in this guild |
@@ -88,7 +94,8 @@ Note: the `/users/{uid}/...` endpoints (currently just `/users/{uid}/reminders`)
 - **Snowflake IDs are strings.** Discord IDs exceed 2^53 and would be corrupted by JSON consumers using IEEE-754 doubles (i.e. JavaScript). Path parameters (`{gid}`, `{uid}`) are the decimal snowflake.
 - **Days and hours are UTC.** Dates appear as `"YYYY-MM-DD"` strings; hours are integers `0–23` in UTC.
 - **`period` query parameter.** Endpoints that accept it take one of `week` (last 7 days), `month` (last 30 days), `year` (last 365 days), or `all`, matched case-insensitively (`?period=WEEK` is honored as `week`). The window is computed at day granularity: `day >= today_utc − N days`. An unrecognized value silently falls back to the endpoint's default (no error). The response echoes the period actually used, always lowercase.
-- **`limit` query parameter.** The ranked-list endpoints (`/top`, `/channels`, `/voice`, `/quietest`, `/leveling`, `/economy`, `/warnings`) accept an optional `limit` — a positive integer capping the number of `entries` returned (applied after sorting, so it's always the top/bottom N). When absent, non-numeric, or `<= 0`, the full list is returned (no error), which can be as long as the guild's member/channel count — pass a `limit` unless you really need everything. There is no offset/pagination. `/moderation`, `/features`, and `/users/{uid}/reminders` take no `limit` param at all — each returns an inherently bounded list (locked channels, toggleable cogs, a per-user reminder cap), not a leaderboard.
+- **`limit` query parameter.** The ranked-list endpoints (`/top`, `/channels`, `/voice`, `/quietest`, `/leveling`, `/economy`, `/warnings`) accept an optional `limit` — a positive integer capping the number of `entries` returned (applied after sorting, so it's always the top/bottom N). When absent, non-numeric, or `<= 0`, the full list is returned (no error), which can be as long as the guild's member/channel count — pass a `limit` unless you really need everything. The one exception is `/channels/{cid}`, whose `limit` caps its `top` posters list and falls back to **10**, not the full list. There is no offset/pagination. `/moderation`, `/features`, and `/users/{uid}/reminders` take no `limit` param at all — each returns an inherently bounded list (locked channels, toggleable cogs, a per-user reminder cap), not a leaderboard.
+- **Series bucketing.** The two time-series endpoints (`/channels/{cid}`, `/members/{uid}/series`) bucket by day for `week`/`month` and by week for `year`/`all`, echoed as `"bucket": "day"` or `"week"`. A week bucket's key is the `"YYYY-MM-DD"` of that week's Monday (UTC). `series` holds only buckets that have data, sorted ascending; the consumer fills gaps with zeros. `start` is the first bucket of the window: the period start for day buckets, the Monday on or before the period start for week buckets, and `null` for `all` (fill from the first bucket present). The first week bucket of a `year` window can be partial, since the window itself still starts at `today_utc − 365 days`.
 - **No rate limiting.** Be a considerate consumer; every request runs SQL against the bot's stats database.
 - **`weeks` request-body parameter (export start only).** Unlike `period`/`limit` above (query parameters on `GET` endpoints), `POST /api/guilds/{gid}/export` accepts an optional `weeks` field in its JSON **body**: an integer 1–12. Missing, non-numeric, or out-of-range values silently fall back/clamp (4 as the default, 12 as the ceiling) rather than 400ing — the same silent-fallback idiom as `period`/`limit`, just on a body field instead of a query string. The effective value actually used comes back as `"weeks"` on the job object, so the caller always knows the real window even after a clamp.
 
@@ -132,6 +139,36 @@ Bot-level metadata, intended for the consumer's "is this user the bot owner?" ch
 
 - `owner_id` — string snowflake of the bot application's owner, or `null` if it can't be resolved.
 - `guild_count` — number of guilds the bot is currently in.
+
+### GET `/api/health`
+
+**Tier:** owner
+
+Bot runtime state: uptime, gateway latency, which cogs loaded, and the size of the data files. Not guild-scoped (no `{gid}`), takes no query parameters.
+
+```json
+{
+  "started_at": "2026-10-10T08:00:00+00:00",
+  "uptime_seconds": 12345,
+  "latency_ms": 42.1,
+  "guild_count": 3,
+  "member_count": 1500,
+  "versions": {"python": "3.13.5", "discordpy": "2.7.1"},
+  "cogs": [
+    {"name": "aidetect", "state": "failed", "error": "ExtensionFailed: …"},
+    {"name": "stats", "state": "loaded", "error": null},
+    {"name": "trace", "state": "disabled", "error": null},
+    …
+  ],
+  "data_files": [{"name": "stats.db", "bytes": 1048576, "modified": "2026-10-10T07:59:00+00:00"}, …]
+}
+```
+
+- `started_at` — ISO8601 UTC, when `bot.py`'s `main()` began loading extensions. `uptime_seconds` — integer seconds since then. Both are `null` when the running process predates this field (it is set by `bot.py`, so it needs a full bot restart, not a `.cog reload webapi`).
+- `latency_ms` — gateway heartbeat latency in milliseconds, one decimal; `null` before the first heartbeat or while disconnected.
+- `guild_count` — as in `/meta`. `member_count` — sum of each guild's member count (a guild whose count Discord hasn't sent counts as 0).
+- `cogs` — one entry per `cogs/*.py` except `__init__.py` and `storage.py`, sorted by name. `state` is checked in this order: `disabled` (in `management.json`'s global `disabled_extensions`), `loaded`, `failed` (raised during `bot.py`'s startup load; `error` is `"<ExceptionType>: <message>"`), else `unloaded`. `error` is `null` unless `state` is `failed`. A cog that failed at startup and was later loaded by hand shows `loaded`. Load failures from `.cog load` after startup are not recorded, so such a cog shows `unloaded`.
+- `data_files` — `stats.db` (at `STATS_DB_PATH`), its `-wal` file, and the JSON data files the bot writes in the repo root (`warnings.json`, `xp.json`, `economy.json`, `palantir_messages.json`, …); files that don't exist are omitted. `modified` is the file's mtime, ISO8601 UTC. Only `os.stat` is used: **file contents are never read or returned** (`palantir_messages.json` is palantir's message cache, see `/palantir`).
 
 ### GET `/api/guilds`
 
@@ -192,6 +229,37 @@ Query: `period` (default `all`), `limit`.
 ```
 
 Sorted by `count` descending. May include channels that have since been deleted (`name: "unknown-channel"`).
+
+### GET `/api/guilds/{gid}/channels/{cid}`
+
+**Tier:** harmless
+
+One channel's activity over the window: totals, share of the guild, trend, a time series, top posters, and a weekday split. There is no hour-of-day breakdown: `stats.db` records hours per user, not per channel.
+
+Query: `period` (default `month`), `limit` (top posters, default **10** — see Conventions).
+
+```json
+{
+  "channel": {"id": "…", "name": "general"},
+  "period": "month",
+  "bucket": "day",
+  "start": "2026-09-10",
+  "totals": {"messages": 1234, "words": 9876, "chars": 54321, "posters": 42},
+  "share": 0.183,
+  "trend": {"recent": 1234, "prior": 1100, "pct": 12.2},
+  "series": [{"day": "2026-09-10", "count": 40}, …],
+  "top": [{"user": {…}, "count": 300}, …],
+  "weekdays": [120, 130, 90, 80, 150, 200, 210]
+}
+```
+
+- `bucket` / `start` / `series` — see **Series bucketing** under Conventions. `series[].count` is the channel's message count in that bucket.
+- `totals` — message, word, and character sums in the window; `posters` is the number of distinct users who posted.
+- `share` — float 0–1, this channel's messages divided by the guild's messages in the same window; `0.0` when the guild has none. (Unlike `/members/{uid}`'s `pct_of_server`, this is a fraction, not a percentage.)
+- `trend` — the last N days (`recent`) vs the N days before that (`prior`), N being the period length (7, 30, or 365) — `/overview`'s trend with the window following `period`. `pct` is the percentage change rounded to one decimal, or `null` when `prior` is 0. `trend` itself is `null` for `period=all`.
+- `top` — users by message count in the window, descending, capped at `limit`.
+- `weekdays` — 7 ints, message counts per UTC weekday, Monday first (same indexing as `/activity`). Sums to `totals.messages`.
+- A channel that has been deleted but has recorded history still returns normally, with `name: "unknown-channel"`; so does a cached channel with no messages (all zeros, empty lists). **Errors:** `400 {"error": "invalid channel id"}` for a non-integer `{cid}`; `404 {"error": "unknown channel"}` when the channel is neither cached in this guild nor present in its stats for any period.
 
 ### GET `/api/guilds/{gid}/activity`
 
@@ -280,6 +348,27 @@ An unknown or departed member is **not** a 404: statistics are looked up regardl
 - `leveling` — `xp` (cumulative, from `xp.json`, defaults to `0`), `level` (derived via `level_from_xp`), and `rank` (1-based rank by `xp` among users with an `xp.json` entry, or `null` if the member has none).
 - `economy` — `bits` (balance, from `economy.json`, defaults to `0`), `rank` (1-based rank by balance, or `null` if the member has no entry), and `streak` (consecutive-day payday streak; `0` for accounts predating the mechanic — backfilled lazily on the next payday — or whose streak was reset).
 - **Note:** warnings are deliberately **not** included here. Warnings are spicy/mod-tier data; they live solely on `GET /api/guilds/{gid}/warnings` so this endpoint stays safely member-readable.
+
+### GET `/api/guilds/{gid}/members/{uid}/series`
+
+**Tier:** harmless
+
+One member's messages and voice time over time.
+
+Query: `period` (default `year`).
+
+```json
+{
+  "period": "year",
+  "bucket": "week",
+  "start": "2025-10-06",
+  "series": [{"day": "2026-01-05", "messages": 12, "voice_seconds": 3600}, …]
+}
+```
+
+- `bucket` / `start` / `series` — see **Series bucketing** under Conventions. A bucket with only messages has `voice_seconds: 0`, one with only voice time has `messages: 0`.
+- `messages` sums the member's messages across all channels; `voice_seconds` is voice-channel time in seconds.
+- Like `/members/{uid}`, an unknown or departed member is not an error: the response has an empty `series`. **Errors:** `400 {"error": "invalid user id"}` for a non-integer `{uid}`.
 
 ### GET `/api/guilds/{gid}/quietest`
 

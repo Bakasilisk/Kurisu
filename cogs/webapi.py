@@ -2,11 +2,14 @@ import asyncio
 import hmac
 import json
 import logging
+import math
 import os
+import platform
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 
+import discord
 from aiohttp import web
 from discord.ext import commands
 
@@ -45,24 +48,42 @@ def level_from_xp(xp: int) -> int:
 
 
 # mirrors cogs/management.py's management._discover_cogs (excludes
-# __init__.py/storage.py) narrowed by Management._toggleable_names (further
-# excludes management/help) - kept as its own directory scan rather than
+# __init__.py/storage.py) - kept as its own directory scan rather than
 # imported, matching this file's zero-import-coupling philosophy for mirrored
-# logic. webapi itself IS toggleable per that list (toggling it is a no-op
-# since webapi has no cog_enabled gate), so it's deliberately not excluded.
-_NON_TOGGLEABLE = {"__init__", "storage", "management", "help"}
+# logic. _toggleable_cog_names narrows it like Management._toggleable_names
+# (further excludes management/help). webapi itself IS toggleable per that
+# list (toggling it is a no-op since webapi has no cog_enabled gate), so it's
+# deliberately not excluded.
+_NON_COGS = {"__init__", "storage"}
+_NON_TOGGLEABLE = _NON_COGS | {"management", "help"}
 
 
-def _toggleable_cog_names() -> list[str]:
+def _cog_names(excluded: set[str] = _NON_COGS) -> list[str]:
     names = []
     for filename in os.listdir(os.path.dirname(__file__)):
         if not filename.endswith(".py"):
             continue
         name = filename[:-3]
-        if name in _NON_TOGGLEABLE:
+        if name in excluded:
             continue
         names.append(name)
     return sorted(names)
+
+
+def _toggleable_cog_names() -> list[str]:
+    return _cog_names(_NON_TOGGLEABLE)
+
+
+# Data files /api/health reports on: stats.db plus its WAL, and the JSON data
+# files .gitignore lists. Name/size/mtime only - contents are never read
+# (palantir_messages.json is the surveillance cache, see _handle_palantir).
+_HEALTH_JSON_FILES = (
+    "warnings.json", "channel_locks.json", "mod_log.json",
+    "xp.json", "messages.json", "leveling_exclude.json",
+    "economy.json", "summary.json", "cerberus.json", "verification.json",
+    "management.json", "palantir.json", "palantir_messages.json",
+    "reminders.json", "tickets.json",
+)
 
 
 def _day_str(dt: datetime) -> str:
@@ -73,6 +94,36 @@ def _period_start(period: str) -> str | None:
     if period not in _PERIOD_DAYS:
         return None
     return _day_str(datetime.now(timezone.utc) - timedelta(days=_PERIOD_DAYS[period]))
+
+
+# Time-series bucketing for /channels/{cid} and /members/{uid}/series:
+# week/month -> one bucket per day, year/all -> one per week. A week bucket's
+# key is the Monday of that week; strftime('%w') is Sunday=0, so (w + 6) % 7
+# is days since Monday. The only %w in this file - weekday splits go through
+# Python's datetime.weekday() (Monday=0) instead, as in _handle_activity.
+_WEEK_BUCKET_SQL = "date(day, '-' || ((strftime('%w', day) + 6) % 7) || ' days')"
+
+
+def _bucket_for(period: str) -> str:
+    return "day" if period in ("week", "month") else "week"
+
+
+def _bucket_sql(bucket: str) -> str:
+    return "day" if bucket == "day" else _WEEK_BUCKET_SQL
+
+
+def _series_start(period: str, bucket: str) -> str | None:
+    """First bucket key of the window: the period start for day buckets, the
+    Monday on or before it for week buckets, None for period=all."""
+    start = _period_start(period)
+    if start is None or bucket == "day":
+        return start
+    d = datetime.strptime(start, "%Y-%m-%d").date()
+    return (d - timedelta(days=d.weekday())).isoformat()
+
+
+def _iso_utc(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _accepted_keys(raw: str) -> set[str]:
@@ -93,14 +144,17 @@ class WebAPI(commands.Cog):
         self.app = web.Application(middlewares=[self._auth_middleware])
         r = self.app.router
         r.add_get("/api/meta", self._handle_meta)
+        r.add_get("/api/health", self._handle_health)
         r.add_get("/api/guilds", self._handle_guilds)
         r.add_get("/api/guilds/{gid}/overview", self._handle_overview)
         r.add_get("/api/guilds/{gid}/top", self._handle_top)
         r.add_get("/api/guilds/{gid}/channels", self._handle_channels)
+        r.add_get("/api/guilds/{gid}/channels/{cid}", self._handle_channel_detail)
         r.add_get("/api/guilds/{gid}/activity", self._handle_activity)
         r.add_get("/api/guilds/{gid}/voice", self._handle_voice)
         r.add_get("/api/guilds/{gid}/growth", self._handle_growth)
         r.add_get("/api/guilds/{gid}/members/{uid}", self._handle_member)
+        r.add_get("/api/guilds/{gid}/members/{uid}/series", self._handle_member_series)
         r.add_get("/api/guilds/{gid}/quietest", self._handle_quietest)
         r.add_get("/api/guilds/{gid}/leveling", self._handle_leveling)
         r.add_get("/api/guilds/{gid}/economy", self._handle_economy)
@@ -279,6 +333,63 @@ class WebAPI(commands.Cog):
     async def _handle_guilds(self, request: web.Request):
         return web.json_response([self._guild_json(g) for g in self.bot.guilds])
 
+    async def _handle_health(self, request: web.Request):
+        # Owner tier (see API.md): bot-wide, not guild-scoped. Like the self
+        # tier, enforcement is on the consumer. started_at/failed_extensions
+        # are set by bot.py's main(), so both are absent until the bot has
+        # been fully restarted on a bot.py that sets them.
+        started_at = getattr(self.bot, "started_at", None)
+        if started_at is not None:
+            uptime = int((datetime.now(timezone.utc) - started_at).total_seconds())
+        else:
+            uptime = None
+        # latency is nan before the first heartbeat and inf while disconnected.
+        latency = getattr(self.bot, "latency", None)
+        latency_ms = round(latency * 1000, 1) if latency is not None and math.isfinite(latency) else None
+
+        # Same state order as `.cog list`, plus `failed` from bot.py's load loop.
+        global_disabled = set(self._cog_json("management.json").get("global", {}).get("disabled_extensions", []))
+        failed = getattr(self.bot, "failed_extensions", {})
+        cogs = []
+        for name in _cog_names():
+            ext = f"cogs.{name}"
+            error = None
+            if ext in global_disabled:
+                state = "disabled"
+            elif ext in self.bot.extensions:
+                state = "loaded"
+            elif ext in failed:
+                state = "failed"
+                error = failed[ext]
+            else:
+                state = "unloaded"
+            cogs.append({"name": name, "state": state, "error": error})
+
+        # stat() only - never open these (see _HEALTH_JSON_FILES).
+        paths = [STATS_DB, f"{STATS_DB}-wal"] + [data_path(f) for f in _HEALTH_JSON_FILES]
+        data_files = []
+        for path in paths:
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            data_files.append({
+                "name": os.path.basename(path),
+                "bytes": st.st_size,
+                "modified": _iso_utc(datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)),
+            })
+
+        return web.json_response({
+            "started_at": _iso_utc(started_at) if started_at is not None else None,
+            "uptime_seconds": uptime,
+            "latency_ms": latency_ms,
+            "guild_count": len(self.bot.guilds),
+            "member_count": sum(g.member_count or 0 for g in self.bot.guilds),
+            "versions": {"python": platform.python_version(), "discordpy": discord.__version__},
+            "cogs": cogs,
+            "data_files": data_files,
+        })
+
     async def _handle_overview(self, request: web.Request):
         guild, err = self._guild_or_error(request)
         if err:
@@ -380,6 +491,108 @@ class WebAPI(commands.Cog):
         rows = await self._fetch(sql, tuple(params))
         entries = [{"channel": self._channel_json(guild, cid), "count": c} for cid, c in rows]
         return web.json_response({"period": period, "entries": entries})
+
+    async def _handle_channel_detail(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        try:
+            cid = int(request.match_info["cid"])
+        except ValueError:
+            return web.json_response({"error": "invalid channel id"}, status=400)
+        # A deleted channel with recorded history still answers (name falls
+        # back to unknown-channel); only a channel that is neither cached nor
+        # in stats.db for this guild is a 404.
+        if guild.get_channel(cid) is None:
+            seen = await self._fetch(
+                "SELECT 1 FROM messages WHERE guild_id = ? AND channel_id = ? LIMIT 1", (guild.id, cid)
+            )
+            if not seen:
+                return web.json_response({"error": "unknown channel"}, status=404)
+
+        period = self._period_param(request, "month")
+        start_day = _period_start(period)
+        bucket = _bucket_for(period)
+        # The one ranked list whose fallback is 10, not the full list.
+        limit = self._limit_param(request) or 10
+
+        where = " WHERE guild_id = ? AND channel_id = ?"
+        params = [guild.id, cid]
+        if start_day:
+            where += " AND day >= ?"
+            params.append(start_day)
+
+        messages, words, chars, posters = await self._fetch_one(
+            "SELECT COALESCE(SUM(count),0), COALESCE(SUM(words),0), COALESCE(SUM(chars),0), "
+            "COUNT(DISTINCT user_id) FROM messages" + where,
+            tuple(params),
+            default=(0, 0, 0, 0),
+        )
+
+        guild_sql = "SELECT COALESCE(SUM(count),0) FROM messages WHERE guild_id = ?"
+        guild_params = [guild.id]
+        if start_day:
+            guild_sql += " AND day >= ?"
+            guild_params.append(start_day)
+        guild_total, = await self._fetch_one(guild_sql, tuple(guild_params), default=(0,))
+        share = messages / guild_total if guild_total else 0.0
+
+        # _handle_overview's recent-vs-prior window, generalised from its fixed
+        # 30 days to the requested period's length. No trend for period=all.
+        trend = None
+        if period in _PERIOD_DAYS:
+            n = _PERIOD_DAYS[period]
+            now = datetime.now(timezone.utc)
+            recent_start = _day_str(now - timedelta(days=n))
+            prior_start = _day_str(now - timedelta(days=2 * n))
+            recent, = await self._fetch_one(
+                "SELECT COALESCE(SUM(count),0) FROM messages WHERE guild_id = ? AND channel_id = ? AND day >= ?",
+                (guild.id, cid, recent_start),
+                default=(0,),
+            )
+            prior, = await self._fetch_one(
+                "SELECT COALESCE(SUM(count),0) FROM messages "
+                "WHERE guild_id = ? AND channel_id = ? AND day >= ? AND day < ?",
+                (guild.id, cid, prior_start, recent_start),
+                default=(0,),
+            )
+            pct = round((recent - prior) / prior * 100, 1) if prior else None
+            trend = {"recent": recent, "prior": prior, "pct": pct}
+
+        key = _bucket_sql(bucket)
+        series_rows = await self._fetch(
+            f"SELECT {key} AS b, SUM(count) FROM messages" + where + " GROUP BY b ORDER BY b",
+            tuple(params),
+        )
+
+        top_rows = await self._fetch(
+            "SELECT user_id, SUM(count) as c FROM messages" + where + " GROUP BY user_id ORDER BY c DESC LIMIT ?",
+            (*params, limit),
+        )
+
+        day_rows = await self._fetch(
+            "SELECT day, SUM(count) FROM messages" + where + " GROUP BY day", tuple(params)
+        )
+        weekdays = [0] * 7
+        for day, count in day_rows:
+            try:
+                weekday = datetime.strptime(day, "%Y-%m-%d").weekday()
+            except ValueError:
+                continue
+            weekdays[weekday] += count
+
+        return web.json_response({
+            "channel": self._channel_json(guild, cid),
+            "period": period,
+            "bucket": bucket,
+            "start": _series_start(period, bucket),
+            "totals": {"messages": messages, "words": words, "chars": chars, "posters": posters},
+            "share": share,
+            "trend": trend,
+            "series": [{"day": b, "count": c} for b, c in series_rows],
+            "top": [{"user": self._user_json(guild, uid), "count": c} for uid, c in top_rows],
+            "weekdays": weekdays,
+        })
 
     async def _handle_activity(self, request: web.Request):
         guild, err = self._guild_or_error(request)
@@ -552,6 +765,44 @@ class WebAPI(commands.Cog):
             "top_channels": [{"channel": self._channel_json(guild, cid), "count": c} for cid, c in channel_rows],
             "leveling": {"xp": xp, "level": level_from_xp(xp), "rank": lvl_rank},
             "economy": {"bits": bits, "rank": econ_rank, "streak": streak},
+        })
+
+    async def _handle_member_series(self, request: web.Request):
+        guild, err = self._guild_or_error(request)
+        if err:
+            return err
+        try:
+            uid = int(request.match_info["uid"])
+        except ValueError:
+            return web.json_response({"error": "invalid user id"}, status=400)
+        period = self._period_param(request, "year")
+        start_day = _period_start(period)
+        bucket = _bucket_for(period)
+        key = _bucket_sql(bucket)
+
+        where = " WHERE guild_id = ? AND user_id = ?"
+        params = [guild.id, uid]
+        if start_day:
+            where += " AND day >= ?"
+            params.append(start_day)
+        msg_rows = await self._fetch(
+            f"SELECT {key} AS b, SUM(count) FROM messages" + where + " GROUP BY b", tuple(params)
+        )
+        voice_rows = await self._fetch(
+            f"SELECT {key} AS b, SUM(seconds) FROM voice" + where + " GROUP BY b", tuple(params)
+        )
+
+        merged: dict[str, dict] = {}
+        for b, count in msg_rows:
+            merged.setdefault(b, {"day": b, "messages": 0, "voice_seconds": 0})["messages"] = count
+        for b, seconds in voice_rows:
+            merged.setdefault(b, {"day": b, "messages": 0, "voice_seconds": 0})["voice_seconds"] = seconds
+
+        return web.json_response({
+            "period": period,
+            "bucket": bucket,
+            "start": _series_start(period, bucket),
+            "series": [merged[b] for b in sorted(merged)],
         })
 
     async def _handle_quietest(self, request: web.Request):
