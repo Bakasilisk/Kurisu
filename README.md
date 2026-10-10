@@ -148,12 +148,25 @@ and member joins/leaves — in a local SQLite database (`stats.db`, path configu
 | `stats activity [period]` | Peak hour/weekday summary plus an hour×weekday heatmap image | — |
 | `stats voice [period] [n]` | Top members by voice time | — |
 | `stats growth [period]` | Joins/leaves/net alongside message activity | — |
+| `stats wrapped [member] [year]` | Kurisu Wrapped: a member's year as a 5-page story (messages + rank, channels, activity, voice/reactions, image card) | — for yourself; Manage Server for another member |
+| `stats serverwrapped [year]` | Kurisu Wrapped for the whole server: totals, top posters/channels, busiest month/day, growth, image card | — |
 | `stats quietest [n]` | Least-active members over the last 30 days | Manage Server |
 | `stats backfill [days]` | Seed history from existing message logs | Manage Server |
 | `stats reset confirm` | Erase all of this server's stats | Manage Server |
 
 `n` (on `user`/`top`/`channels`/`voice`/`quietest`) controls how many rows to show — defaults
 to 5, capped at 25.
+
+`stats wrapped` / `stats serverwrapped` are a Spotify-Wrapped-style yearly recap, in German with
+Kurisu commenting on each page (text variants in `assets/wrapped/lines.json`). `year` defaults to
+the current year (shown as "bis jetzt") and covers that whole calendar year. The story is five
+pages flipped with ◀/▶ buttons (only the invoker can use them; they stop working after 5 minutes
+idle), and the last page is an image card. Via `/` the story is private and the last page has a
+one-time "Im Kanal teilen" button that posts the card publicly; via `.` the story is public, so
+there's no share button. Busiest hour/weekday are shown in Europe/Berlin time (stored data stays
+UTC). Covering a full year needs history from before the bot joined, so run `stats backfill` with
+no `days` first; reactions, voice time and joins/leaves can't be backfilled and only count from
+when tracking started.
 
 `stats backfill` with no `days` scans the entire server — every readable text/announcement
 channel, thread (active and archived, including forum posts), and voice/stage channel's text

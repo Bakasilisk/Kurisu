@@ -1,0 +1,155 @@
+{
+  "_doc": "Kurisu-Kommentare für stats wrapped. Pro Seite und Bereich wird eine Variante zufällig gewählt. Platzhalter in {geschweiften Klammern} füllt der Bot. Etwa jede dritte Variante enthält eine Steins;Gate-Referenz.",
+
+  "user": {
+    "messages": {
+      "high": [
+        "{messages} Nachrichten. Ich habe das nicht *gezählt*, weil es mich interessiert, sondern weil es sich um einen statistisch signifikanten Datensatz handelt. Das ist ein Unterschied!",
+        "{messages} Nachrichten, Top {percent} des Servers. Hast du eigentlich noch ein Leben außerhalb von Discord? … Das war eine rein wissenschaftliche Frage.",
+        "{messages} Nachrichten. Selbst Daru schreibt weniger, und der lebt praktisch auf @channel. … W-woher ich weiß, wie viel man auf @channel schreibt? Das ist irrelevant! Völlig irrelevant!"
+      ],
+      "mid": [
+        "{messages} Nachrichten, Platz {rank}. Solide. Nicht beeindruckend, aber solide. Mehr Lob bekommst du von mir nicht.",
+        "{messages} Nachrichten. Ein gesundes Mittelmaß. Wissenschaftlich betrachtet ist das sogar… vernünftig. Gewöhn dich nicht dran, dass ich das sage.",
+        "{messages} Nachrichten. Für einen Zeitreisenden wärst du zu unauffällig, für einen NPC zu gesprächig. Interessant. Ich meine… messbar. Messbar interessant."
+      ],
+      "low": [
+        "{messages} Nachrichten in einem ganzen Jahr? … Nicht, dass ich dich vermisst hätte oder so. Ich wollte nur die Stichprobengröße anmerken.",
+        "{messages} Nachrichten. Bei so einer Stichprobe würde jeder Gutachter mein Paper ablehnen. Schreib nächstes Jahr mehr. Für die Wissenschaft. Nur für die Wissenschaft!",
+        "{messages} Nachrichten. Bist du in einer anderen Weltlinie hängengeblieben? Laut Divergenzmeter warst du hier quasi nicht existent. … Nicht, dass ich nachgesehen hätte."
+      ]
+    },
+
+    "channels": {
+      "default": [
+        "Du warst am häufigsten in {channel}. Natürlich. Ich hätte nichts anderes erwartet… und ich verurteile das *nicht*. Hör auf, mich so anzusehen.",
+        "{share} deiner Nachrichten gingen nach {channel}. Und dein stärkster Monat war der {month}. Was war da los? … Ich frage nicht aus Neugier. Ich frage aus… Datenintegrität.",
+        "{channel} also. Wenn das Future Gadget Lab einen Discord hätte, wäre das wohl dein Stammplatz. Und ich wäre ganz sicher nicht in dem Kanal. Ganz sicher nicht."
+      ],
+      "single": [
+        "Du schreibst praktisch nur in {channel}. Treue zu einem Kanal ist… effizient. Langweilig, aber effizient.",
+        "Ein einziger Kanal: {channel}. Okabe würde das „Fokus“ nennen. Ich nenne es Tunnelblick. Wir haben beide recht. Hauptsächlich ich."
+      ]
+    },
+
+    "time": {
+      "night": [
+        "Deine aktivste Uhrzeit ist {hour}. Weißt du eigentlich, was Schlafmangel mit dem präfrontalen Kortex macht? … Ich frage nur aus wissenschaftlichem Interesse. Nicht aus Sorge.",
+        "{hour}. Um diese Uhrzeit sind nur zwei Sorten Menschen wach: Neurowissenschaftlerinnen mit Deadline und selbsternannte verrückte Wissenschaftler, die „El Psy Kongroo“ in ihr Handy flüstern. Ich hoffe für dich, du bist Ersteres.",
+        "Am aktivsten um {hour}, und am liebsten am {weekday}. Geh. Schlafen. Das ist keine Bitte, das ist eine medizinische Empfehlung."
+      ],
+      "morning": [
+        "Am aktivsten um {hour}. Frühaufsteher also. Das respektiere ich. Ein bisschen. Vor meinem ersten Kaffee rede ich trotzdem nicht mit dir.",
+        "{hour} am {weekday}, dein Höhepunkt. Morgens schon so gesprächig… Verdächtig produktiv. Bist du sicher, dass du keine Laborratte bist?",
+        "Du bist um {hour} am aktivsten. Morgens, wenn Okabe noch schläft und das Labor endlich ruhig ist. Ich verstehe das. Mehr, als ich zugeben würde."
+      ],
+      "day": [
+        "Dein Höhepunkt: {hour}, am liebsten am {weekday}. Ein vernünftiger Rhythmus. Ich habe ausnahmsweise nichts zu meckern. Genieß es, das passiert nicht oft.",
+        "Um {hour} schreibst du am meisten. Mitten am Tag… Solltest du da nicht arbeiten? Oder lernen? … Mir doch egal. Wirklich.",
+        "{hour} am {weekday}. Die Uhrzeit, zu der normale Menschen Dr Pepper trinken. Nicht, dass ich das tue. Regelmäßig. Täglich. Hör auf zu fragen."
+      ],
+      "evening": [
+        "Am aktivsten um {hour}. Abends, wenn alles andere erledigt ist. Wenigstens hast du Prioritäten. Halbwegs.",
+        "{hour} am {weekday}. Die klassische Feierabend-Kommunikation. Statistisch völlig unauffällig. Das ist ein Kompliment. Glaube ich.",
+        "Dein Höhepunkt ist {hour}. Die Uhrzeit, zu der im Labor die wirklich dummen Ideen entstehen. Zum Beispiel, eine Mikrowelle an ein Telefon anzuschließen."
+      ]
+    },
+
+    "streak": {
+      "high": [
+        "{days} aktive Tage, davon {streak} am Stück. Diese Konsistenz ist… beeindruckend. Nur ein bisschen!",
+        "{streak} Tage in Folge. Wenn du deine Forschung so konsequent betreiben würdest, hättest du schon einen Nobelpreis. Wenn."
+      ],
+      "low": [
+        "{days} aktive Tage, längste Serie {streak}. Sporadisch, aber vorhanden. Wie Okabes Vernunft.",
+        "Längste Serie: {streak} Tage. Das ist kein Vorwurf. Nur eine Beobachtung. Eine sehr deutliche Beobachtung."
+      ]
+    },
+
+    "voice": {
+      "high": [
+        "{voice} im Voice-Chat. Das sind {voice_days} Tage. Du hättest in der Zeit eine Zeitmaschine bauen kön… vergiss, dass ich das gesagt habe.",
+        "{voice} im Voice-Chat. In der Zeit hätte das Future Gadget Lab drei Mikrowellen umbauen und dabei mindestens eine Weltlinie verschieben können. Nicht, dass ich Weltlinien für real halte!",
+        "{voice} gesprochen. Deine Stimmbänder verdienen eine Pause. Und deine Mitmenschen vielleicht auch. … Das war ein Witz. Halbwegs."
+      ],
+      "mid": [
+        "{voice} im Voice-Chat. Gesellig, aber nicht anstrengend. Eine ausgewogene Dosis. Ich hätte sie dir genauso verschrieben.",
+        "{voice} im Voice. Genug, um gehört zu werden, nicht genug, um zu nerven. Respekt. Fast."
+      ],
+      "low": [
+        "{voice} im Voice-Chat. Lieber schreiben als reden? Kann ich nachvollziehen. Tippen erzeugt weniger peinliche Aufzeichnungen.",
+        "Nur {voice} im Voice. Du bist also auch eher der Typ, der lieber anonym auf @channel… n-nein, vergiss es. Gar nichts."
+      ],
+      "none": [
+        "Kein einziges Mal im Voice-Chat. Nicht schlimm. Manche Gedanken sind schriftlich ohnehin besser aufgehoben.",
+        "Null Minuten Voice. Du existierst für mich nur als Text. Das ist… eigentlich ganz angenehm."
+      ]
+    },
+
+    "reactions": [
+      "{given} Reaktionen verteilt, {received} bekommen. Ich habe eine Theorie über dein Sozialverhalten, aber ich behalte sie für mich. Vorerst.",
+      "{received} Reaktionen bekommen. Die Leute mögen dich anscheinend. Ich… verstehe es wissenschaftlich nicht ganz, aber gut.",
+      "{given} Reaktionen gegeben. Ob dahinter echte Zuneigung steckt oder ein Upa-Sammeltrieb, kann nicht mal ich messen."
+    ],
+
+    "finale": {
+      "top1": [
+        "Platz 1 auf dem Server. Na gut. Das ist… beeindruckend. Ein *bisschen*. Bild dir bloß nichts darauf ein!",
+        "Platz 1. Gratuliere, du bist offiziell Labormitglied Nr. 001. Hououin Kyouma wäre neidisch. Und bevor du fragst: Nein, ich bin nicht deine Assistentin.",
+        "Niemand hat mehr geschrieben als du. Ich gratuliere dir. Widerwillig. Aber ich gratuliere."
+      ],
+      "top10": [
+        "Platz {rank}. In den Top 10, nicht ganz oben. Das ist eine respektable Position. Ich sage das nicht, um nett zu sein!",
+        "Platz {rank}. Gut genug, um aufzufallen. Nicht so gut, dass ich mir Sorgen um deine Freizeit machen muss. Perfekt kalibriert, quasi.",
+        "Platz {rank}. Willkommen im Future Gadget Lab, Laborgerät Nr. {rank}… äh, Labor*mitglied*. Mitglied! Das meinte ich."
+      ],
+      "other": [
+        "Das war dein Jahr in Zahlen. Nicht, dass ich es mir angesehen hätte… Nun ja. Vielleicht ein bisschen. Bis nächstes Jahr.",
+        "Das war's. Ein ganzes Jahr, reduziert auf ein paar Datenpunkte. Und trotzdem irgendwie… ganz nett. Erzähl das niemandem.",
+        "Fertig. Und bevor du fragst: Nein, ich bin nicht stolz auf dich. Ich bin… neutral. Wissenschaftlich neutral. El Psy… nein. Ich sage das nicht."
+      ]
+    },
+
+    "empty": [
+      "Keine Daten. Null. Entweder warst du nie hier, oder du bist jemand, der nur mitliest. Beides ist… verdächtig.",
+      "Für {year} habe ich nichts über dich. Gar nichts. Bist du in einer anderen Weltlinie unterwegs?"
+    ]
+  },
+
+  "server": {
+    "intro": [
+      "{messages} Nachrichten von {members} Mitgliedern. Ich habe die Zahlen analysiert. Ihr redet zu viel. Aber… es ist ein lebendiger Ort. Das gebe ich zu.",
+      "{messages} Nachrichten in {year}. Würde man das ausdrucken, bräuchte man ein ganzes Labor nur für das Papier. Ich würde es trotzdem lesen. Aus wissenschaftlichem Interesse.",
+      "{members} aktive Mitglieder, {messages} Nachrichten. Ein Datensatz, für den manche Forschungsgruppe töten würde. SERN zum Beispiel. … Das war ein Scherz. Hoffentlich."
+    ],
+    "top": [
+      "{top_user} hat am meisten geschrieben. Ich werde nicht kommentieren, was das über die Person aussagt. Ich denke es mir nur.",
+      "Ganz vorne: {top_user}. Glückwunsch. Ich verleihe dir hiermit den Titel Labor*mitglied* Nr. 001. Er ist nichts wert, aber du hast ihn.",
+      "Die meistgenutzten Kanäle verraten mehr über euch, als euch lieb ist. Ich sage nichts. Ich habe nur sehr deutlich die Augenbraue gehoben."
+    ],
+    "time": [
+      "Euer stärkster Monat war der {month}, euer aktivster Tag der {day}. Was war da los? Ich frage nur zur Vollständigkeit der Daten.",
+      "Am meisten los war am {day}. Ob da eine Weltlinie gewechselt hat? Nein. Natürlich nicht. Unwissenschaftlich. Aber verdächtig."
+    ],
+    "growth": {
+      "positive": [
+        "{joins} neue Mitglieder, {leaves} gegangen. Netto {net:+}. Der Server wächst. Ich bin nicht stolz. Ich stelle nur fest.",
+        "Netto {net:+} Mitglieder. Wenn das so weitergeht, braucht das Labor ein größeres Gebäude."
+      ],
+      "negative": [
+        "{joins} gekommen, {leaves} gegangen. Netto {net:+}. Qualität vor Quantität, sage ich immer. Das ist kein Trost. Oder doch. Ein bisschen.",
+        "Netto {net:+} Mitglieder. Nicht jedes Experiment wächst. Manchmal wird es nur… konzentrierter."
+      ]
+    },
+    "finale": [
+      "Das war {year}. Danke, dass ihr… da wart. So. Jetzt habe ich es gesagt. Erwähnt es nie wieder.",
+      "Ein ganzes Jahr Chaos, Memes und gelegentlich sogar sinnvolle Gespräche. Ich hätte es nicht anders… ich meine, es war akzeptabel. Völlig akzeptabel.",
+      "{year} ist vorbei, zumindest in diesem Datensatz. El Psy Kongroo. … Ich habe das NICHT gesagt."
+    ],
+    "empty": [
+      "Für {year} habe ich keine Daten. Wurde `stats backfill` überhaupt ausgeführt? Ohne Daten keine Analyse. So funktioniert Wissenschaft."
+    ]
+  },
+
+  "share": "📊 Kurisu Wrapped {year} von {user}"
+}
