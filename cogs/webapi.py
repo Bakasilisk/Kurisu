@@ -126,8 +126,11 @@ def _iso_utc(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _accepted_keys(raw: str) -> set[str]:
-    return {k.strip() for k in raw.split(",") if k.strip()}
+def _accepted_keys(raw: str) -> set[bytes]:
+    # Bytes, not str: hmac.compare_digest raises TypeError on a str holding
+    # non-ASCII, which would turn a non-ASCII X-API-Key into an unhandled 500
+    # instead of a 401. Encoded the same way as the header in _auth_middleware.
+    return {k.strip().encode("utf-8", "surrogateescape") for k in raw.split(",") if k.strip()}
 
 
 class WebAPI(commands.Cog):
@@ -234,7 +237,10 @@ class WebAPI(commands.Cog):
     @web.middleware
     async def _auth_middleware(self, request: web.Request, handler):
         key = request.headers.get("X-API-Key")
-        if not key or not any(hmac.compare_digest(key, k) for k in self._keys):
+        # surrogateescape: aiohttp decodes header bytes that aren't valid UTF-8
+        # into lone surrogates, which a plain .encode() would raise on.
+        key_bytes = key.encode("utf-8", "surrogateescape") if key else b""
+        if not key_bytes or not any(hmac.compare_digest(key_bytes, k) for k in self._keys):
             return web.json_response({"error": "unauthorized"}, status=401)
         try:
             return await handler(request)
@@ -293,6 +299,17 @@ class WebAPI(commands.Cog):
             except Exception:
                 self._owner_id = getattr(self.bot, "owner_id", None)
         return self._owner_id
+
+    async def _export_permitted(self, guild, uid: int) -> bool:
+        """Live permission check shared by export start and download - the
+        API's most sensitive endpoints (the download returns message content).
+        A web session caches guild rights for days, so the bot re-verifies on
+        every call rather than trusting the caller. Bot owner, or a live Manage
+        Server holder (covers Administrator and the guild owner via discord.py's
+        own guild_permissions resolution)."""
+        owner_id = await self._resolve_owner_id()
+        member = guild.get_member(uid)
+        return uid == owner_id or (member is not None and member.guild_permissions.manage_guild)
 
     def _export_cog(self):
         # Runtime coupling via get_cog, never an import - the same
@@ -1018,16 +1035,8 @@ class WebAPI(commands.Cog):
         except (TypeError, ValueError):
             return web.json_response({"error": "invalid requested_by"}, status=400)
 
-        # Live permission check - this is the API's most sensitive endpoint (the
-        # download route returns message content), and a web session only caches
-        # guild rights at login, so the bot re-verifies here rather than trusting
-        # the caller. Bot owner, or a live Manage Server holder (covers
-        # Administrator and the guild owner via discord.py's own
-        # guild_permissions resolution).
-        owner_id = await self._resolve_owner_id()
-        member = guild.get_member(uid)
-        permitted = uid == owner_id or (member is not None and member.guild_permissions.manage_guild)
-        if not permitted:
+        # Live permission check, see _export_permitted.
+        if not await self._export_permitted(guild, uid):
             return web.json_response({"error": "not permitted"}, status=403)
 
         # `weeks` is optional and silently clamped by the cog (see Export._clamp_weeks) —
@@ -1063,6 +1072,15 @@ class WebAPI(commands.Cog):
         guild, err = self._guild_or_error(request)
         if err:
             return err
+        # Mandatory, so a client that omits it can't skip the live check. It
+        # checks the downloader's *current* rights, not that they started the
+        # job - any current manager (or the bot owner) may fetch a finished export.
+        try:
+            uid = int(request.query["requested_by"])
+        except (KeyError, ValueError):
+            return web.json_response({"error": "invalid requested_by"}, status=400)
+        if not await self._export_permitted(guild, uid):
+            return web.json_response({"error": "not permitted"}, status=403)
         cog, err = self._export_cog()
         if err:
             return err
@@ -1070,7 +1088,11 @@ class WebAPI(commands.Cog):
         if result is None:
             return web.json_response({"error": "no export"}, status=404)
         data, filename = result
-        logger.info("webapi: export downloaded | guild=%s bytes=%s", guild.id, len(data))
+        job = cog.job_status(guild.id) or {}
+        logger.info(
+            "webapi: export downloaded | guild=%s requested_by=%s job_requested_by=%s bytes=%s",
+            guild.id, uid, job.get("requested_by"), len(data),
+        )
         # The only endpoint in this cog that returns message content - every
         # other endpoint is aggregate stats or config (mirrors the /palantir
         # surveillance boundary's equivalent rule on the read side).

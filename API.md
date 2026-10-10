@@ -78,8 +78,8 @@ Errors are JSON objects with a single `error` string:
 | `404` | `{"error": "unknown guild"}` | the bot is not in guild `{gid}` (or it isn't cached) |
 | `404` | `{"error": "unknown channel"}` | `/channels/{cid}`: the channel is neither in the guild's cache nor in this guild's recorded stats |
 | `400` | `{"error": "invalid json"}` | export start: the POST body isn't valid JSON |
-| `400` | `{"error": "invalid requested_by"}` | export start: `requested_by` in the body isn't an integer |
-| `403` | `{"error": "not permitted"}` | export start: `requested_by` is neither the bot owner nor a current member with Manage Server in this guild |
+| `400` | `{"error": "invalid requested_by"}` | export start/download: `requested_by` (body for start, query string for download) is missing or isn't an integer |
+| `403` | `{"error": "not permitted"}` | export start/download: `requested_by` is neither the bot owner nor a current member with Manage Server in this guild |
 | `403` | `{"error": "export disabled"}` | export is disabled for this guild via `.feature disable export` |
 | `409` | `{"error": "already running", "job": {…}}` | export start: a job is already running for this guild |
 | `500` | `{"error": "internal error"}` | unhandled server error (details in the bot log) |
@@ -645,6 +645,10 @@ Current export job status for the guild.
 
 Downloads the finished export as CSV. The only endpoint in this API that returns message content.
 
+Query parameters:
+
+- `requested_by` (**required**) — the decimal snowflake of the user downloading, e.g. `?requested_by=234567890123456789`.
+
 ```
 200 OK
 Content-Type: text/csv; charset=utf-8
@@ -659,6 +663,11 @@ timestamp,channel,author_id,author,content,message_id,attachment_urls
 
 - Columns: `timestamp, channel, author_id, author, content, message_id, attachment_urls`. Encoded UTF-8 with a leading BOM (for Excel); a cell in `channel`/`author`/`content` starting with `= + - @` is prefixed with `'` to neutralize spreadsheet formula injection.
 - `Content-Disposition` filename pattern: `export-<gid>-<YYYYMMDDTHHMMZ>.csv`.
+- `requested_by` follows the same rules as on export start: sourced by the consumer from its own authenticated session, **never** from user-editable input, and re-verified live against the guild's current member/permission state on every download — so a user whose Manage Server was removed after login can no longer fetch message content with a still-valid web session.
+- Permitted iff `requested_by` is the bot's owner, or a current member of the guild with Manage Server (which covers Administrator and the guild owner) — otherwise `403 {"error": "not permitted"}`. This checks the downloader's **current** rights, not that they started the job: any currently permitted user may download a finished export, whoever requested it.
+- `400 {"error": "invalid requested_by"}` if `requested_by` is missing or isn't an integer. The parameter is mandatory, so a client can't skip the check by omitting it.
+- **Breaking change:** earlier versions of this endpoint took no `requested_by`; a client that still omits it now gets `400` instead of the CSV.
+- Checked in this order: guild (`400`/`404`), then `requested_by` (`400`), then permission (`403`), then the `export` cog and job (`503`/`404`).
 - `404 {"error": "no export"}` if there's no finished, unexpired job for this guild (never started, still running, errored, or past its 60-minute TTL).
 - `503 {"error": "export unavailable"}` if the `export` cog isn't loaded.
 
