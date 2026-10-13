@@ -102,7 +102,7 @@ async def require_outranks(bot, ctx, member, action: str, *, reply=None) -> bool
     if reply is None:
         reply = ctx.reply
     if not await actor_outranks(bot, ctx, member):
-        await reply(f"You can't {action} someone with an equal or higher role than you.")
+        await reply(f"You can't {action} someone with an equal or higher role than you. That's how hierarchies work.")
         return False
     return True
 
@@ -153,13 +153,13 @@ async def common_error_reply(ctx, error, reply=None) -> bool:
     if reply is None:
         reply = ctx.reply
     if isinstance(error, commands.MissingPermissions):
-        await reply("You don't have permission to do that.")
+        await reply("Hmph. You don't have the permissions for that, and I'm not bending the rules for you.")
         return True
     elif isinstance(error, commands.BotMissingPermissions):
-        await reply("I don't have permission to do that.")
+        await reply("I can't do that — someone didn't give me the permissions. Fix that first.")
         return True
     elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
-        await reply(str(error) or "Invalid or missing argument.")
+        await reply(str(error) or "That argument is either missing or nonsense. Check the command and try again.")
         return True
     elif isinstance(error, commands.CheckFailure):
         return True
@@ -284,25 +284,34 @@ class Management(commands.Cog):
         if isinstance(error, commands.CommandInvokeError):
             original = error.original
             if isinstance(original, commands.ExtensionNotFound):
-                await self._reply(ctx, embed=self._embed("I couldn't find a cog by that name."))
+                await self._reply(
+                    ctx, embed=self._embed("There's no cog by that name. Check your spelling before blaming me.")
+                )
                 return
             elif isinstance(original, commands.ExtensionAlreadyLoaded):
-                await self._reply(ctx, embed=self._embed("That cog is already loaded."))
+                await self._reply(
+                    ctx, embed=self._embed("That cog is already loaded. Loading it twice won't make it work harder.")
+                )
                 return
             elif isinstance(original, commands.ExtensionNotLoaded):
-                await self._reply(ctx, embed=self._embed("That cog isn't loaded."))
+                await self._reply(ctx, embed=self._embed("That cog isn't loaded, so there's nothing to do."))
                 return
             elif isinstance(original, commands.ExtensionError):
-                await self._reply(ctx, embed=self._embed(f"Couldn't do that: {original}"))
+                await self._reply(ctx, embed=self._embed(f"That didn't work, and here's why: {original}"))
                 return
         if isinstance(error, commands.NotOwner):
-            await self._reply(ctx, embed=self._embed("Only the bot owner can do that."))
+            await self._reply(ctx, embed=self._embed("That's reserved for the bot owner. Which you are not."))
         elif isinstance(error, commands.MissingPermissions):
-            await self._reply(ctx, embed=self._embed("You don't have permission to do that."))
+            await self._reply(ctx, embed=self._embed("You don't have the permissions for that. Rules are rules."))
         elif isinstance(error, commands.BotMissingPermissions):
-            await self._reply(ctx, embed=self._embed("I don't have permission to do that."))
+            await self._reply(
+                ctx, embed=self._embed("I'm missing the permissions for that. Grant them first, then ask again.")
+            )
         elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
-            await self._reply(ctx, embed=self._embed(str(error) or "Invalid or missing argument."))
+            await self._reply(
+                ctx,
+                embed=self._embed(str(error) or "Something's missing or malformed in that command. Look at it again."),
+            )
         else:
             raise error
 
@@ -352,7 +361,10 @@ class Management(commands.Cog):
         """Unload a cog by name."""
         if _to_short_name(name) == "management":
             await self._reply(
-                ctx, embed=self._embed("Refusing to unload the management cog — that would lock you out.")
+                ctx,
+                embed=self._embed(
+                    "No. Unloading the management cog would lock you out — I'm not running that experiment."
+                ),
             )
             return
         ext = _to_extension(name)
@@ -382,7 +394,9 @@ class Management(commands.Cog):
             except commands.ExtensionError as e:
                 failures.append(f"`{ext}`: {e}")
         if failures:
-            await self._reply(ctx, embed=self._embed("Reloaded with errors:\n" + "\n".join(failures)))
+            await self._reply(
+                ctx, embed=self._embed("Reloaded, but not cleanly. These failed:\n" + "\n".join(failures))
+            )
         else:
             await self._reply(ctx, embed=self._embed(f"🔁 Reloaded {len(self.bot.extensions)} extension(s)."))
 
@@ -415,18 +429,18 @@ class Management(commands.Cog):
             guild = ctx.guild
             if guild is None:
                 await self._reply(
-                    ctx, embed=self._embed("There's no current server here — give a guild ID to leave.")
+                    ctx, embed=self._embed("There's no server here to leave. Give me a guild ID.")
                 )
                 return
         else:
             try:
                 gid = int(guild_id)
             except ValueError:
-                await self._reply(ctx, embed=self._embed("That doesn't look like a valid guild ID."))
+                await self._reply(ctx, embed=self._embed("That's not a valid guild ID. It's a number — a long one."))
                 return
             guild = self.bot.get_guild(gid)
             if guild is None:
-                await self._reply(ctx, embed=self._embed("I'm not in a guild with that ID."))
+                await self._reply(ctx, embed=self._embed("I'm not in any guild with that ID. Double-check it."))
                 return
         # Reply before leaving: a prefix reply can't be posted once we've left the channel.
         await self._reply(ctx, embed=self._embed(f"👋 Leaving **{guild.name}** (`{guild.id}`)."))
@@ -498,7 +512,7 @@ class Management(commands.Cog):
         # case-insensitively against the toggleable set.
         resolved = _resolve_ci(name, self._toggleable_names())
         if resolved is None:
-            await self._reply(ctx, embed=self._embed(f"`{name.strip()}` isn't a toggleable feature."))
+            await self._reply(ctx, embed=self._embed(f"`{name.strip()}` isn't a toggleable feature. I checked."))
             return
         name = resolved
         guild_conf = self._guild_conf(ctx.guild.id)
@@ -514,7 +528,7 @@ class Management(commands.Cog):
         """Disable a cog's behavior in this server."""
         resolved = _resolve_ci(name, self._toggleable_names())
         if resolved is None:
-            await self._reply(ctx, embed=self._embed(f"`{name.strip()}` isn't a toggleable feature."))
+            await self._reply(ctx, embed=self._embed(f"`{name.strip()}` isn't a toggleable feature. I checked."))
             return
         name = resolved
         guild_conf = self._guild_conf(ctx.guild.id)

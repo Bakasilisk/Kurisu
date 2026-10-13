@@ -15,7 +15,7 @@ MAX_IMAGE_BYTES = 25 * 1024 * 1024
 _IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 
 NOT_CONFIGURED_MESSAGE = (
-    "AI detection isn't configured — the bot owner needs to set "
+    "AI detection isn't configured, and I can't experiment without equipment. The bot owner needs to set "
     "SIGHTENGINE_API_USER and SIGHTENGINE_API_SECRET."
 )
 
@@ -111,12 +111,14 @@ class AIDetect(commands.Cog):
 
     async def _read_attachment(self, ctx, attachment: discord.Attachment) -> tuple[bytes | None, str | None]:
         if attachment.size > MAX_IMAGE_BYTES:
-            await ctx.reply(f"That image is too large to check (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB).")
+            await ctx.reply(
+                f"That image is too large to check (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB). Shrink it first."
+            )
             return None, None
         try:
             data = await attachment.read()
         except (discord.HTTPException, discord.NotFound):
-            await ctx.reply("Couldn't download that attachment — try again.")
+            await ctx.reply("I couldn't download that attachment. Try again — it's probably a fluke.")
             return None, None
         return data, attachment.url
 
@@ -181,12 +183,14 @@ class AIDetect(commands.Cog):
             return
 
         if url is not None and not url.lower().startswith(("http://", "https://")):
-            await ctx.reply("That doesn't look like a valid image URL.")
+            await ctx.reply("That's not a valid image URL. I need an actual link to an image.")
             return
 
         data, thumb_url = await self._resolve_image_source(ctx, url)
         if data is None and thumb_url is None:
-            await ctx.reply("Attach an image, reply to an image message, or pass an image URL.")
+            await ctx.reply(
+                "I need a sample to analyze. Attach an image, reply to an image message, or pass an image URL."
+            )
             return
 
         # Deliberately not using reply_ephemeral_aware — like captions, the result is
@@ -196,7 +200,7 @@ class AIDetect(commands.Cog):
             try:
                 prob = await self._score_image(data=data, url=thumb_url if data is None else None)
             except DetectorError:
-                await ctx.reply("The AI-detector service failed — try again in a moment.")
+                await ctx.reply("The AI-detector service failed on its end. Try again in a moment.")
                 return
 
         embed = self._build_result_embed(prob, thumb_url)
@@ -207,7 +211,9 @@ class AIDetect(commands.Cog):
     async def _menu_check(self, interaction: discord.Interaction, message: discord.Message):
         # Context menus bypass cog_check, so honor the per-guild toggle manually.
         if interaction.guild is not None and not cog_enabled(self.bot, interaction.guild.id, "aidetect"):
-            await interaction.response.send_message("AI detection is disabled in this server.", ephemeral=True)
+            await interaction.response.send_message(
+                "AI detection is disabled in this server. Not my call.", ephemeral=True
+            )
             return
 
         if not self._configured():
@@ -220,7 +226,7 @@ class AIDetect(commands.Cog):
         if attachment is not None:
             if attachment.size > MAX_IMAGE_BYTES:
                 await interaction.response.send_message(
-                    f"That image is too large to check (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB).",
+                    f"That image is too large to check (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB). Shrink it first.",
                     ephemeral=True,
                 )
                 return
@@ -229,21 +235,25 @@ class AIDetect(commands.Cog):
                 thumb_url = attachment.url
             except (discord.HTTPException, discord.NotFound):
                 await interaction.response.send_message(
-                    "Couldn't download that attachment — try again.", ephemeral=True
+                    "I couldn't download that attachment. Try again — it's probably a fluke.", ephemeral=True
                 )
                 return
         else:
             thumb_url = _first_embed_image_url(message.embeds)
 
         if data is None and thumb_url is None:
-            await interaction.response.send_message("That message doesn't have an image.", ephemeral=True)
+            await interaction.response.send_message(
+                "That message doesn't have an image. What exactly did you want me to check?", ephemeral=True
+            )
             return
 
         await interaction.response.defer(ephemeral=False)
         try:
             prob = await self._score_image(data=data, url=thumb_url if data is None else None)
         except DetectorError:
-            await interaction.followup.send("The AI-detector service failed — try again in a moment.", ephemeral=True)
+            await interaction.followup.send(
+                "The AI-detector service failed on its end. Try again in a moment.", ephemeral=True
+            )
             return
 
         embed = self._build_result_embed(prob, thumb_url)

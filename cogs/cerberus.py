@@ -759,15 +759,15 @@ class Cerberus(commands.Cog):
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MissingPermissions):
-            await ctx.reply("You don't have permission to do that.")
+            await ctx.reply("You don't have permission to do that. Security settings are off-limits.")
         elif isinstance(error, commands.ChannelNotFound):
-            await ctx.reply("I couldn't find that channel.")
+            await ctx.reply("I couldn't find that channel. Try a mention or ID.")
         elif isinstance(error, commands.RoleNotFound):
-            await ctx.reply("I couldn't find that role.")
+            await ctx.reply("I couldn't find that role. Try a mention or ID.")
         elif isinstance(error, commands.MemberNotFound):
-            await ctx.reply("I couldn't find that member.")
+            await ctx.reply("I couldn't find that member. Try a mention or ID.")
         elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
-            await ctx.reply(str(error) or "Invalid or missing argument.")
+            await ctx.reply(str(error) or "That argument is missing or invalid. Look at the command again.")
         else:
             raise error
 
@@ -860,7 +860,7 @@ class Cerberus(commands.Cog):
         """Set cerberus's mode: shadow (detect + alert only) or active (also take action)."""
         mode = mode.lower()
         if mode not in ("shadow", "active"):
-            await ctx.reply("Mode must be `shadow` or `active`.")
+            await ctx.reply("Mode must be `shadow` or `active`. Those are the only two settings.")
             return
         guild_conf = self._guild_conf(ctx.guild.id)
         guild_conf["mode"] = mode
@@ -926,7 +926,7 @@ class Cerberus(commands.Cog):
             self._save_config()
             await ctx.reply(f"❌ {target.mention} is no longer exempt.")
         else:
-            await ctx.reply(f"{target.mention} wasn't exempt.")
+            await ctx.reply(f"{target.mention} wasn't exempt to begin with.")
 
     @cerberus_exempt.command(name="list")
     @commands.has_permissions(manage_guild=True)
@@ -966,7 +966,7 @@ class Cerberus(commands.Cog):
             self._save_config()
             await ctx.reply(f"{role.mention} is no longer protected.")
         else:
-            await ctx.reply(f"{role.mention} wasn't protected.")
+            await ctx.reply(f"{role.mention} wasn't protected in the first place.")
 
     @cerberus_protectedrole.command(name="list")
     @commands.has_permissions(manage_guild=True)
@@ -983,7 +983,7 @@ class Cerberus(commands.Cog):
         """Manually end an active cerberus lockdown."""
         guild_conf = self._guild_conf(ctx.guild.id)
         if not guild_conf["lockdown"]["active"]:
-            await ctx.reply("There is no active cerberus lockdown.")
+            await ctx.reply("There's no active cerberus lockdown. Nothing to unlock.")
             return
         task = self._lockdown_tasks.pop(ctx.guild.id, None)
         if task is not None:

@@ -220,7 +220,7 @@ class Export(commands.Cog):
         if isinstance(error, commands.CheckAnyFailure):
             # A CheckFailure sibling, not a MissingPermissions subclass — raised by
             # has_permissions_or_owner on the export command.
-            await self._reply(ctx, "You don't have permission to do that.")
+            await self._reply(ctx, "You don't have permission to do that. Server data isn't up for grabs.")
             return
         if await common_error_reply(ctx, error, reply=lambda *a, **k: self._reply(ctx, *a, **k)):
             return
@@ -419,7 +419,7 @@ class Export(commands.Cog):
         hint = _web_hint(guild.id)
         if job.state == "error":
             file = None
-            content = f"Export failed: {job.error}"
+            content = f"Export failed: {job.error}. Not my finest experiment."
         elif len(job.data) <= DM_MAX_BYTES:
             file = discord.File(io.BytesIO(job.data), job.filename)
             content = f"Here's your export — {job.messages:,} message(s)."
@@ -430,7 +430,7 @@ class Export(commands.Cog):
                 content = f"Here's your export (gzip-compressed) — {job.messages:,} message(s)."
             else:
                 file = None
-                content = f"Export done, {job.messages:,} message(s), too large for a DM — {hint}."
+                content = f"Export done, {job.messages:,} message(s) — too large for a DM, so {hint}."
 
         try:
             if file is not None:
@@ -443,7 +443,7 @@ class Export(commands.Cog):
 
         try:
             await channel.send(
-                f"{user.mention} I couldn't DM you the export — {hint}.",
+                f"{user.mention} I couldn't DM you the export. It's not lost — {hint}.",
                 allowed_mentions=discord.AllowedMentions(users=[user]),
             )
         except (discord.Forbidden, discord.HTTPException):
@@ -474,12 +474,15 @@ class Export(commands.Cog):
 
         state, job_json = self.start_export(guild, ctx.author.id, "discord", on_done=_on_done)
         if state == "disabled":
-            await self._reply(ctx, "Export is disabled for this server — an admin can `.feature enable export`.")
+            await self._reply(
+                ctx, "Export is disabled for this server. An admin can turn it on with `.feature enable export`."
+            )
         elif state == "running":
             origin = job_json.get("origin", "unknown") if job_json else "unknown"
             await self._reply(
                 ctx,
-                f"An export is already running for this server (started via {origin}) — wait for it to finish.",
+                f"An export is already running for this server (started via {origin}). "
+                f"One at a time — wait for it to finish.",
             )
         else:
             await self._reply(

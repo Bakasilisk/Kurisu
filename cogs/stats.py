@@ -77,7 +77,7 @@ class PeriodConverter(commands.Converter, app_commands.Transformer):
             # echoes BadArgument text publicly, so reflecting the argument
             # would let any member bounce mentions/markdown off the bot
             # (same rule as moderation.parse_duration).
-            raise commands.BadArgument(f"Period must be one of {', '.join(PERIODS)}.")
+            raise commands.BadArgument(f"That's not a valid period. Pick one of {', '.join(PERIODS)}.")
         return normalized
 
 
@@ -755,7 +755,7 @@ class WrappedView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.invoker_id:
             return True
-        await interaction.response.send_message("Das ist nicht dein Wrapped.", ephemeral=True)
+        await interaction.response.send_message("Das ist nicht dein Wrapped. Finger weg.", ephemeral=True)
         return False
 
     async def _turn(self, interaction: discord.Interaction, step: int) -> None:
@@ -793,7 +793,8 @@ class WrappedView(discord.ui.View):
             self._sync_buttons()
             try:
                 await interaction.edit_original_response(view=self)
-                await interaction.followup.send("Teilen hat nicht geklappt. Versuch es gleich noch einmal.",
+                await interaction.followup.send("Teilen hat nicht geklappt. Kein Grund zur Panik — "
+                                                "versuch es gleich noch einmal.",
                                                 ephemeral=True)
             except discord.HTTPException:
                 pass
@@ -1355,7 +1356,7 @@ class Stats(commands.Cog):
         use the has_permissions_or_owner decorator directly instead."""
         if ctx.author.guild_permissions.manage_guild or await self.bot.is_owner(ctx.author):
             return True
-        await self._reply(ctx, f"You need Manage Server to {action}.")
+        await self._reply(ctx, f"You need Manage Server to {action}. You don't have it.")
         return False
 
     async def cog_check(self, ctx):
@@ -1363,19 +1364,19 @@ class Stats(commands.Cog):
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MemberNotFound):
-            await self._reply(ctx, "I couldn't find that member.")
+            await self._reply(ctx, "I couldn't find that member. I can't analyze someone who isn't there.")
         elif isinstance(error, commands.CheckAnyFailure):
             # A CheckFailure sibling, not a MissingPermissions subclass — raised by
             # has_permissions_or_owner on stats_quietest/stats_backfill.
-            await self._reply(ctx, "You don't have permission to do that.")
+            await self._reply(ctx, "You don't have permission to do that. Some data is for admins only.")
         elif isinstance(error, commands.CheckFailure):
             return
         elif isinstance(error, commands.MissingPermissions):
-            await self._reply(ctx, "You don't have permission to do that.")
+            await self._reply(ctx, "You don't have permission to do that. Some data is for admins only.")
         elif isinstance(error, commands.BotMissingPermissions):
-            await self._reply(ctx, "I don't have permission to do that.")
+            await self._reply(ctx, "I can't do that — I'm missing the permissions. Fix that first.")
         elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
-            await self._reply(ctx, str(error) or "Invalid or missing argument.")
+            await self._reply(ctx, str(error) or "That argument is missing or invalid. Try again, properly this time.")
         else:
             raise error
 
@@ -1747,7 +1748,9 @@ class Stats(commands.Cog):
         (e.g. after inviting the bot to more channels)."""
         guild = ctx.guild
         if guild.id in self._backfill_in_progress:
-            await self._reply(ctx, "A backfill is already running for this server — wait for it to finish.")
+            await self._reply(
+                ctx, "A backfill is already running for this server. Wait for it to finish — I'm not doing it twice."
+            )
             return
         self._backfill_in_progress.add(guild.id)
 
@@ -1888,7 +1891,9 @@ class Stats(commands.Cog):
         except Exception:
             logger.exception("Stats: backfill failed for guild %s", guild.id)
             try:
-                await report_channel.send("⚠️ Backfill hit an unexpected error and stopped early — check the logs.")
+                await report_channel.send(
+                    "⚠️ Backfill hit an unexpected error and stopped early. Check the logs — I'd like to know too."
+                )
             except discord.HTTPException:
                 pass
         finally:
@@ -1952,12 +1957,16 @@ class Stats(commands.Cog):
         `year` (default: current Berlin-time year) is in range. Returns the year, or
         None after replying."""
         if self._wrapped_lines is None:
-            await self._reply(ctx, "Kurisu Wrapped ist gerade nicht verfügbar.")
+            await self._reply(ctx, "Kurisu Wrapped ist gerade nicht verfügbar. Versuch es später noch mal.")
             return None
         current = datetime.now(WRAPPED_TZ).year
         year = current if year is None else year
         if not WRAPPED_MIN_YEAR <= year <= current:
-            await self._reply(ctx, f"Wrapped gibt es nur für die Jahre {WRAPPED_MIN_YEAR} bis {current}.")
+            await self._reply(
+                ctx,
+                f"Wrapped gibt es nur für die Jahre {WRAPPED_MIN_YEAR} bis {current}. "
+                "Zeitreisen sind noch nicht erfunden.",
+            )
             return None
         return year
 

@@ -37,9 +37,9 @@ FORMAT_LABELS = {
     "ONE_SHOT": "One Shot",
 }
 
-NO_MATCH_MESSAGE = "No match found on AniList — check the spelling or try a different title."
-RATE_LIMITED_MESSAGE = "AniList is rate-limiting requests right now — try again in a bit."
-SERVICE_FAILED_MESSAGE = "The AniList service failed — try again in a moment."
+NO_MATCH_MESSAGE = "Nothing on AniList matches that. Check the spelling or try a different title."
+RATE_LIMITED_MESSAGE = "AniList is rate-limiting requests right now. Give it a moment and try again."
+SERVICE_FAILED_MESSAGE = "The AniList service failed — not my fault. Try again in a moment."
 
 
 class AniListError(Exception):

@@ -31,7 +31,7 @@ def parse_duration(text: str) -> timedelta:
     match = DURATION_RE.match(text.strip().lower())
     if not match:
         raise commands.BadArgument(
-            "Invalid duration. Use a number followed by s/m/h/d, e.g. `10m`, `2h`, `1d`."
+            "That's not a valid duration. Use a number followed by s/m/h/d, e.g. `10m`, `2h`, `1d`."
         )
     amount, unit = match.groups()
     return timedelta(**{DURATION_UNITS[unit]: int(amount)})
@@ -85,9 +85,9 @@ class Moderation(commands.Cog):
         by role hierarchy, else None. The guild owner and the bot owner both
         bypass the actor check; the bot's own role limit always applies."""
         if not await actor_outranks(self.bot, ctx, member):
-            return f"You can't {verb} someone with an equal or higher role than you."
+            return f"You can't {verb} someone with an equal or higher role than you. Hierarchy exists for a reason."
         if not bot_outranks(ctx.guild, member):
-            return f"My role isn't high enough to {verb} that member."
+            return f"My role isn't high enough to {verb} that member. Move me up if you want results."
         return None
 
     @staticmethod
@@ -166,21 +166,21 @@ class Moderation(commands.Cog):
         """Stop logging moderation actions."""
         had_one = self.mod_log_channels.pop(str(ctx.guild.id), None) is not None
         self._save_mod_log_channels()
-        await self._reply(ctx, "📋 Mod-log disabled." if had_one else "Mod-log was not enabled.")
+        await self._reply(ctx, "📋 Mod-log disabled." if had_one else "Mod-log wasn't enabled in the first place.")
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MemberNotFound):
-            await self._reply(ctx, "I couldn't find that member.")
+            await self._reply(ctx, "I couldn't find that member. Typo, maybe?")
         elif isinstance(error, commands.UserNotFound):
-            await self._reply(ctx, "I couldn't find that user.")
+            await self._reply(ctx, "I couldn't find that user. Check the ID or name.")
         elif isinstance(error, commands.ChannelNotFound):
-            await self._reply(ctx, "I couldn't find that channel.")
+            await self._reply(ctx, "I couldn't find that channel. It isn't hiding — it just isn't there.")
         elif isinstance(error, commands.CheckAnyFailure):
             # CheckAnyFailure (from has_permissions_or_owner's check_any) is a
             # CheckFailure sibling, not a MissingPermissions subclass — common_error_reply
             # wouldn't recognize it and would silently swallow it via the trailing
             # CheckFailure branch. Keep it visible, matching the old combined branch.
-            await self._reply(ctx, "You don't have permission to do that.")
+            await self._reply(ctx, "You don't have permission to do that. Moderation isn't a free-for-all.")
         elif await common_error_reply(ctx, error, reply=lambda text: self._reply(ctx, text)):
             return
         else:
@@ -242,7 +242,7 @@ class Moderation(commands.Cog):
             return
         delta = parse_duration(duration)
         if delta > timedelta(days=28):
-            await self._reply(ctx, "Timeouts can't exceed 28 days.")
+            await self._reply(ctx, "Timeouts can't exceed 28 days. Discord's rule, not mine.")
             return
         await member.timeout(delta, reason=f"{ctx.author}: {reason}")
         await self._reply(ctx, f"🔇 Timed out {member.mention} for {duration} — {reason}")
@@ -358,7 +358,7 @@ class Moderation(commands.Cog):
     async def purge(self, ctx, amount: int, member: discord.Member | None = None):
         """Bulk-delete messages in the current channel, optionally filtered by member."""
         if not 1 <= amount <= 100:
-            await self._reply(ctx, "Please choose an amount between 1 and 100.")
+            await self._reply(ctx, "Be reasonable. Pick an amount between 1 and 100.")
             return
 
         def check(msg):
@@ -419,7 +419,7 @@ class Moderation(commands.Cog):
     async def slowmode(self, ctx, seconds: int):
         """Set the slowmode delay (in seconds) for the current channel. Use 0 to disable."""
         if not 0 <= seconds <= 21600:
-            await self._reply(ctx, "Slowmode must be between 0 and 21600 seconds (6 hours).")
+            await self._reply(ctx, "Slowmode must be between 0 and 21600 seconds (6 hours). Pick a sane number.")
             return
         await ctx.channel.edit(slowmode_delay=seconds)
         if seconds == 0:

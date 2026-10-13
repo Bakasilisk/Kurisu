@@ -1087,11 +1087,11 @@ class Palantir(commands.Cog):
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, (commands.MissingPermissions, commands.CheckAnyFailure)):
-            await self._reply(ctx, "You don't have permission to do that.")
+            await self._reply(ctx, "You don't have permission to do that. Surveillance settings aren't for everyone.")
         elif isinstance(error, commands.ChannelNotFound):
-            await self._reply(ctx, "I couldn't find that channel.")
+            await self._reply(ctx, "I couldn't find that channel. Check your input before wasting my time.")
         elif isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
-            await self._reply(ctx, str(error) or "Invalid or missing argument.")
+            await self._reply(ctx, str(error) or "Something's off with that argument — it's missing or invalid.")
         elif isinstance(error, commands.CheckFailure):
             return
         else:
@@ -1172,7 +1172,7 @@ class Palantir(commands.Cog):
         modactions, invites, server, tickets)."""
         category = category.lower()
         if category not in CATEGORIES:
-            await self._reply(ctx, f"Unknown category. Choose from: {', '.join(CATEGORIES)}")
+            await self._reply(ctx, f"That category doesn't exist. Choose from: {', '.join(CATEGORIES)}")
             return
         guild_conf = self._guild_conf(ctx.guild.id)
         if category not in guild_conf["disabled_categories"]:
@@ -1187,7 +1187,7 @@ class Palantir(commands.Cog):
         """Resume logging a category of events."""
         category = category.lower()
         if category not in CATEGORIES:
-            await self._reply(ctx, f"Unknown category. Choose from: {', '.join(CATEGORIES)}")
+            await self._reply(ctx, f"That category doesn't exist. Choose from: {', '.join(CATEGORIES)}")
             return
         guild_conf = self._guild_conf(ctx.guild.id)
         if category in guild_conf["disabled_categories"]:
@@ -1202,7 +1202,7 @@ class Palantir(commands.Cog):
         """Toggle attachment archiving on or off for this server."""
         state = state.lower()
         if state not in ("on", "off"):
-            await self._reply(ctx, "Use `on` or `off`.")
+            await self._reply(ctx, "It's `on` or `off`. There's no third option.")
             return
         guild_conf = self._guild_conf(ctx.guild.id)
         guild_conf["archive_attachments"] = state == "on"

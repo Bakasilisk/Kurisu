@@ -118,13 +118,13 @@ class Leveling(commands.Cog):
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MemberNotFound):
-            await ctx.reply("I couldn't find that member.")
+            await ctx.reply("I couldn't find that member. Check the name or mention.")
         elif isinstance(error, (commands.ChannelNotFound, commands.BadUnionArgument)):
-            await ctx.reply("I couldn't find that channel.")
+            await ctx.reply("I couldn't find that channel. Does it even exist?")
         elif isinstance(error, commands.CheckAnyFailure):
             # A CheckFailure sibling, not a MissingPermissions subclass — common_error_reply
             # doesn't recognize it and would otherwise silently swallow it as a bare CheckFailure.
-            await ctx.reply("You don't have permission to do that.")
+            await ctx.reply("You don't have permission to do that. Don't give me that look.")
         elif await common_error_reply(ctx, error):
             return
         else:
@@ -277,7 +277,7 @@ class Leveling(commands.Cog):
         if had_xp:
             await ctx.reply(f"🧹 Reset XP for {member.mention}")
         else:
-            await ctx.reply(f"{member.mention} has no XP to reset.")
+            await ctx.reply(f"{member.mention} has no XP to reset. There's nothing to undo.")
 
     @commands.command(name="setxp")
     @has_permissions_or_owner(moderate_members=True)
@@ -287,7 +287,7 @@ class Leveling(commands.Cog):
         if not await require_outranks(self.bot, ctx, member, "set XP for"):
             return
         if amount < 0:
-            await ctx.reply("Amount can't be negative.")
+            await ctx.reply("The amount can't be negative. That's not how XP works.")
             return
         async with self._xp_lock:
             guild_xp = self.xp.setdefault(str(ctx.guild.id), {})
@@ -324,7 +324,7 @@ class Leveling(commands.Cog):
         category excludes its channels; excluding a channel excludes its threads."""
         excluded = self.excluded.setdefault(str(ctx.guild.id), [])
         if target.id in excluded:
-            await ctx.reply(f"{target.mention} is already excluded.")
+            await ctx.reply(f"{target.mention} is already excluded. Once is enough.")
             return
         excluded.append(target.id)
         self._save_excluded()
@@ -343,7 +343,7 @@ class Leveling(commands.Cog):
         """Re-include a previously excluded channel, category, or thread."""
         excluded = self.excluded.get(str(ctx.guild.id), [])
         if target.id not in excluded:
-            await ctx.reply(f"{target.mention} was not excluded.")
+            await ctx.reply(f"{target.mention} wasn't excluded in the first place.")
             return
         excluded.remove(target.id)
         if not excluded:

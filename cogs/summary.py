@@ -45,19 +45,22 @@ SUMMARY_FILE = data_path("summary.json")
 _IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
 
 NOT_CONFIGURED_MESSAGE = (
-    "Channel summaries aren't configured — the bot owner needs to set ANTHROPIC_API_KEY."
+    "Channel summaries aren't configured. The bot owner needs to set ANTHROPIC_API_KEY first."
 )
-NO_ACTIVITY_MESSAGE = f"Not enough recent activity to summarize (fewer than {MIN_MESSAGES} messages in the window)."
-IN_PROGRESS_MESSAGE = "A summary is already being generated for this channel — hang tight."
-NO_HISTORY_PERMISSION_MESSAGE = "I don't have permission to read this channel's message history."
-FETCH_FAILED_MESSAGE = "Couldn't read this channel's message history — try again in a moment."
-RATE_LIMITED_MESSAGE = "Claude is rate-limiting requests right now — try again in a bit."
-AUTH_FAILED_MESSAGE = "Channel summaries aren't configured correctly — the bot owner needs to check the Anthropic API key."
-SERVICE_FAILED_MESSAGE = "The summary service failed — try again in a moment."
-HOURS_MOD_ONLY_MESSAGE = "Only mods can pick a custom time window — run it without hours for the default 2h."
-PREFIX_MOD_ONLY_MESSAGE = "`.summary` is mod-only — use `/summary` instead; it replies only to you."
-USER_LIMIT_MESSAGE = "You can request another summary in {remaining}."
-GUILD_LIMIT_MESSAGE = "This server has used all {limit} summaries for the last 24h — try again in {remaining}."
+NO_ACTIVITY_MESSAGE = (
+    f"Insufficient data. There's not enough recent activity to summarize "
+    f"(fewer than {MIN_MESSAGES} messages in the window)."
+)
+IN_PROGRESS_MESSAGE = "A summary is already being generated for this channel. Patience."
+NO_HISTORY_PERMISSION_MESSAGE = "I don't have permission to read this channel's message history. Grant it, then ask again."
+FETCH_FAILED_MESSAGE = "I couldn't read this channel's message history. Try again in a moment."
+RATE_LIMITED_MESSAGE = "Claude is rate-limiting requests right now. Give it a bit and try again."
+AUTH_FAILED_MESSAGE = "Channel summaries are misconfigured. The bot owner needs to check the Anthropic API key."
+SERVICE_FAILED_MESSAGE = "The summary service failed, and I'd rather not guess. Try again in a moment."
+HOURS_MOD_ONLY_MESSAGE = "Only mods can pick a custom time window. Run it without hours for the default 2h."
+PREFIX_MOD_ONLY_MESSAGE = "`.summary` is mod-only. Use `/summary` instead — it replies only to you."
+USER_LIMIT_MESSAGE = "You can request another summary in {remaining}. Until then, read the channel yourself."
+GUILD_LIMIT_MESSAGE = "This server has burned through all {limit} summaries for the last 24h. Try again in {remaining}."
 
 SYSTEM_PROMPT = """You summarize Discord channel activity for a server member.
 
@@ -150,7 +153,9 @@ class Summary(commands.Cog):
             return
         if isinstance(error, commands.CommandOnCooldown):
             await self._reply(
-                ctx, f"This command is on cooldown for this channel — try again in {error.retry_after:.0f}s."
+                ctx,
+                f"This command is on cooldown for this channel. "
+                f"Try again in {error.retry_after:.0f}s — I need a moment too.",
             )
             return
         if await common_error_reply(ctx, error, reply=lambda *a, **k: self._reply(ctx, *a, **k)):

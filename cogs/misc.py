@@ -15,7 +15,7 @@ class Misc(commands.Cog):
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.BadArgument):
-            await ctx.reply("Nutzer nicht gefunden.")
+            await ctx.reply("Nutzer nicht gefunden. Ich hab nachgesehen — den gibt es nicht.")
             return
         if isinstance(error, commands.CheckFailure):
             return

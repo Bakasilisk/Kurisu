@@ -152,7 +152,9 @@ class Captions(commands.Cog):
     async def _render_and_send(self, ctx, template: Template, texts: list[str]):
         for text in texts:
             if len(text) > MAX_TEXT_LENGTH:
-                await ctx.reply(f"That text is too long for this bubble (max {MAX_TEXT_LENGTH} characters).")
+                await ctx.reply(
+                    f"That text is too long for this bubble (max {MAX_TEXT_LENGTH} characters). Be concise."
+                )
                 return
 
         # Acknowledge the interaction before the slow work below. The base-image decode
@@ -165,7 +167,9 @@ class Captions(commands.Cog):
             try:
                 base_image = await asyncio.to_thread(self._load_base_image, template)
             except (FileNotFoundError, UnidentifiedImageError, OSError):
-                await ctx.reply("This template's image is missing or unreadable — let the bot owner know.")
+                await ctx.reply(
+                    "This template's image is missing or unreadable. Tell the bot owner — I can't caption thin air."
+                )
                 return
 
             buffer = await asyncio.to_thread(_render, base_image, template, texts)

@@ -101,11 +101,11 @@ class Tickets(commands.Cog):
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.ChannelNotFound):
-            await self._reply(ctx, "I couldn't find that channel.")
+            await self._reply(ctx, "I couldn't find that channel. Check it and try again.")
         elif isinstance(error, commands.NoPrivateMessage):
-            await self._reply(ctx, "That command only works in a server.")
+            await self._reply(ctx, "That command only works in a server, not in DMs.")
         elif isinstance(error, commands.CheckAnyFailure):
-            await self._reply(ctx, "You don't have permission to do that.")
+            await self._reply(ctx, "You don't have permission to do that. Leave it to the mods.")
         elif await common_error_reply(ctx, error, reply=lambda *a, **k: self._reply(ctx, *a, **k)):
             return
         else:
@@ -175,7 +175,7 @@ class Tickets(commands.Cog):
     def _prefix_hint(subcommand: str, guild_conf: dict) -> str:
         channel_id = guild_conf.get("channel_id")
         where = f" or run this in <#{channel_id}>" if channel_id else ""
-        return f"Use `/ticket {subcommand}` (private){where}."
+        return f"Not here. Use `/ticket {subcommand}` (private){where}."
 
     # --- Delivery helpers (never raise) --------------------------------------
 
@@ -321,7 +321,9 @@ class Tickets(commands.Cog):
             await self._reply(ctx, f"Sent to ticket #{ticket['id']}.")
         else:
             await self._reply(
-                ctx, f"Saved to ticket #{ticket['id']}, but I couldn't DM the user (DMs closed or bot blocked)."
+                ctx,
+                f"Saved to ticket #{ticket['id']}, but I couldn't DM the user (DMs closed or bot blocked). "
+                f"Not my fault.",
             )
 
     async def _close_ticket(self, ticket: dict, guild_conf: dict, guild, *, closer, by_mod: bool, reason) -> None:
@@ -382,11 +384,11 @@ class Tickets(commands.Cog):
         guild_conf = self._guild_conf(ctx.guild.id)
         if not guild_conf["channel_id"] or self._ticket_channel(ctx.guild, guild_conf) is None:
             await self._reply(
-                ctx, "Tickets aren't set up on this server — ask a mod to run `/ticket channel set #channel`."
+                ctx, "Tickets aren't set up on this server. Ask a mod to run `/ticket channel set #channel`."
             )
             return
         if len(text) > MAX_TEXT_LENGTH:
-            await self._reply(ctx, f"Ticket text can't exceed {MAX_TEXT_LENGTH} characters.")
+            await self._reply(ctx, f"Ticket text can't exceed {MAX_TEXT_LENGTH} characters. Get to the point.")
             return
 
         existing = [
@@ -394,7 +396,9 @@ class Tickets(commands.Cog):
         ]
         if len(existing) >= MAX_OPEN_PER_USER:
             await self._reply(
-                ctx, f"You already have open ticket #{existing[0]['id']} — reply to me in DM or close it first."
+                ctx,
+                f"You already have open ticket #{existing[0]['id']}. "
+                f"Reply to me in DM or close it first — one at a time.",
             )
             return
 
@@ -426,7 +430,7 @@ class Tickets(commands.Cog):
             # nobody can see is worse than none — drop it rather than persist it.
             del guild_conf["tickets"][str(ticket_id)]
             await self._reply(
-                ctx, "I couldn't post your ticket to the ticket channel — ask a mod to check my permissions there."
+                ctx, "I couldn't post your ticket to the ticket channel. Ask a mod to check my permissions there."
             )
             return
         ticket["channel_message_id"] = message.id
@@ -447,8 +451,8 @@ class Tickets(commands.Cog):
         reply = f"🎫 Ticket **#{ticket_id}** opened — mods will answer you by DM."
         if not dm_ok:
             reply += (
-                "\nI couldn't DM you: enable *Allow direct messages from server members* "
-                "for this server or you won't receive answers."
+                "\nI couldn't DM you. Enable *Allow direct messages from server members* "
+                "for this server, or the answers will never reach you."
             )
         if ctx.interaction is None:
             reply += "\nTip: `/ticket open` keeps your request private."
@@ -458,31 +462,31 @@ class Tickets(commands.Cog):
     async def ticket_reply(self, ctx, ticket_id: int, *, text: str):
         """Reply to a ticket."""
         if len(text) > MAX_TEXT_LENGTH:
-            await self._reply(ctx, f"Ticket text can't exceed {MAX_TEXT_LENGTH} characters.")
+            await self._reply(ctx, f"Ticket text can't exceed {MAX_TEXT_LENGTH} characters. Get to the point.")
             return
 
         found = self._find_ticket(ticket_id)
 
         if ctx.guild is not None:
             if found is None or found[1]["guild_id"] != ctx.guild.id:
-                await self._reply(ctx, f"No ticket #{ticket_id} in this server.")
+                await self._reply(ctx, f"There's no ticket #{ticket_id} in this server. I checked.")
                 return
             guild_conf, found_ticket = found
             is_mod = await _is_mod(ctx)
             if found_ticket["user_id"] == ctx.author.id and not is_mod:
-                await self._reply(ctx, "Reply to me in DM to add to your ticket.")
+                await self._reply(ctx, "Not here. Reply to me in DM to add to your ticket.")
                 return
             if not is_mod:
-                await self._reply(ctx, "You don't have permission to do that.")
+                await self._reply(ctx, "You don't have permission to do that. Don't push your luck.")
                 return
             if not self._in_ticket_channel_or_slash(ctx, guild_conf):
                 await self._reply(ctx, self._prefix_hint("reply", guild_conf))
                 return
             if found_ticket["status"] == "closed":
-                await self._reply(ctx, f"Ticket #{ticket_id} is closed.")
+                await self._reply(ctx, f"Ticket #{ticket_id} is closed. Too late for that.")
                 return
             if len(found_ticket["messages"]) >= MAX_MESSAGES_PER_TICKET:
-                await self._reply(ctx, "This ticket is full — ask a mod to close it and open a new one.")
+                await self._reply(ctx, "This ticket is full. Ask a mod to close it and open a new one.")
                 return
             await self._mod_reply(ctx, found_ticket, ctx.guild, text)
             return
@@ -490,27 +494,29 @@ class Tickets(commands.Cog):
         # DM path: no guild context, so the caller can only be replying to
         # their own ticket.
         if found is None or found[1]["user_id"] != ctx.author.id:
-            await self._reply(ctx, f"You don't have a ticket #{ticket_id}.")
+            await self._reply(ctx, f"You don't have a ticket #{ticket_id}. Check the number.")
             return
         guild_conf, found_ticket = found
         if found_ticket["status"] == "closed":
-            await self._reply(ctx, f"Ticket #{ticket_id} is closed.")
+            await self._reply(ctx, f"Ticket #{ticket_id} is closed. Too late for that.")
             return
         if not cog_enabled(self.bot, found_ticket["guild_id"], "tickets"):
-            await self._reply(ctx, "Tickets are currently disabled on that server.")
+            await self._reply(ctx, "Tickets are currently disabled on that server. Nothing I can do about it.")
             return
         guild = self.bot.get_guild(found_ticket["guild_id"])
         if guild is None:
-            await self._reply(ctx, "I'm no longer in that server.")
+            await self._reply(ctx, "I'm no longer in that server, so I can't pass anything along.")
             return
 
         result = await self._relay_user_message(
             found_ticket, guild_conf, guild, ctx.author, text, ctx.message.attachments
         )
         if result == "full":
-            await self._reply(ctx, "This ticket is full — ask a mod to close it and open a new one.")
+            await self._reply(ctx, "This ticket is full. Ask a mod to close it and open a new one.")
         elif result == "gone":
-            await self._reply(ctx, f"Couldn't deliver — the ticket channel on {guild.name} is gone; ask a mod.")
+            await self._reply(
+                ctx, f"I couldn't deliver that — the ticket channel on {guild.name} is gone. Ask a mod."
+            )
         else:
             await self._reply(ctx, f"📨 Forwarded to ticket #{ticket_id}.")
 
@@ -521,7 +527,7 @@ class Tickets(commands.Cog):
         if found is None:
             # Same wording as the real permission failure, so probing ids
             # doesn't reveal which tickets exist in other servers.
-            await self._reply(ctx, "You don't have permission to do that.")
+            await self._reply(ctx, "You don't have permission to do that. Don't push your luck.")
             return
         guild_conf, found_ticket = found
 
@@ -532,13 +538,13 @@ class Tickets(commands.Cog):
             and await _is_mod(ctx)
         )
         if not (is_owner or is_mod):
-            await self._reply(ctx, "You don't have permission to do that.")
+            await self._reply(ctx, "You don't have permission to do that. Don't push your luck.")
             return
         if is_mod and not is_owner and not self._in_ticket_channel_or_slash(ctx, guild_conf):
             await self._reply(ctx, self._prefix_hint("close", guild_conf))
             return
         if found_ticket["status"] == "closed":
-            await self._reply(ctx, f"Ticket #{ticket_id} is already closed.")
+            await self._reply(ctx, f"Ticket #{ticket_id} is already closed. Closing it twice changes nothing.")
             return
 
         guild = self.bot.get_guild(found_ticket["guild_id"])  # may be None — _close_ticket copes
@@ -585,7 +591,7 @@ class Tickets(commands.Cog):
 
         found_ticket = guild_conf["tickets"].get(str(ticket_id))
         if found_ticket is None:
-            await self._reply(ctx, f"No ticket #{ticket_id} in this server.")
+            await self._reply(ctx, f"There's no ticket #{ticket_id} in this server. I checked.")
             return
 
         header = (
@@ -714,7 +720,7 @@ class Tickets(commands.Cog):
                 if guild_conf["channel_id"] and cog_enabled(self.bot, guild.id, "tickets"):
                     try:
                         await message.channel.send(
-                            "You have no open ticket. Open one in a server with `/ticket open <text>`.",
+                            "You don't have an open ticket. Open one in a server with `/ticket open <text>`.",
                             allowed_mentions=discord.AllowedMentions.none(),
                         )
                     except discord.HTTPException:
@@ -727,7 +733,8 @@ class Tickets(commands.Cog):
             name = guild.name if guild is not None else "that server"
             try:
                 await message.channel.send(
-                    f"Tickets are currently disabled on {name}.", allowed_mentions=discord.AllowedMentions.none(),
+                    f"Tickets are currently disabled on {name}. Nothing I can do about it.",
+                    allowed_mentions=discord.AllowedMentions.none(),
                 )
             except discord.HTTPException:
                 pass
@@ -741,7 +748,7 @@ class Tickets(commands.Cog):
             try:
                 await message.channel.send(
                     "You have several open tickets (" + ", ".join(parts) +
-                    ") — use `.ticket reply <id> <text>` to pick one.",
+                    ") — I can't read minds. Use `.ticket reply <id> <text>` to pick one.",
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
             except discord.HTTPException:
@@ -753,7 +760,7 @@ class Tickets(commands.Cog):
         if now - last < DM_COOLDOWN_SECONDS:
             try:
                 await message.channel.send(
-                    "Slow down — one message every 5 seconds.", allowed_mentions=discord.AllowedMentions.none(),
+                    "Slow down. One message every 5 seconds, please.", allowed_mentions=discord.AllowedMentions.none(),
                 )
             except discord.HTTPException:
                 pass
@@ -763,7 +770,7 @@ class Tickets(commands.Cog):
         if len(text) > MAX_TEXT_LENGTH:
             try:
                 await message.channel.send(
-                    f"Ticket text can't exceed {MAX_TEXT_LENGTH} characters.",
+                    f"Ticket text can't exceed {MAX_TEXT_LENGTH} characters. Get to the point.",
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
             except discord.HTTPException:
@@ -777,13 +784,13 @@ class Tickets(commands.Cog):
         try:
             if result == "full":
                 await message.channel.send(
-                    "This ticket is full — ask a mod to close it and open a new one.",
+                    "This ticket is full. Ask a mod to close it and open a new one.",
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
             elif result == "gone":
                 await message.channel.send(
-                    f"Couldn't deliver — the ticket channel on {guild.name if guild else 'that server'} is "
-                    f"gone; ask a mod.",
+                    f"I couldn't deliver that — the ticket channel on {guild.name if guild else 'that server'} is "
+                    f"gone. Ask a mod.",
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
             else:

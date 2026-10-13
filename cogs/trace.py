@@ -15,9 +15,9 @@ MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 _IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 
-NO_MATCH_MESSAGE = "No match found — the scene might be too obscure, cropped, or edited."
-RATE_LIMITED_MESSAGE = "trace.moe is rate-limiting requests right now — try again in a bit."
-SERVICE_FAILED_MESSAGE = "The trace.moe service failed — try again in a moment."
+NO_MATCH_MESSAGE = "No match found. The scene might be too obscure, cropped, or edited — I can't work miracles."
+RATE_LIMITED_MESSAGE = "trace.moe is rate-limiting requests right now. Patience — try again in a bit."
+SERVICE_FAILED_MESSAGE = "The trace.moe service failed. Not my doing — try again in a moment."
 
 
 class TraceError(Exception):
@@ -107,12 +107,15 @@ class TraceMoe(commands.Cog):
 
     async def _read_attachment(self, ctx, attachment: discord.Attachment) -> tuple[bytes | None, str | None]:
         if attachment.size > MAX_IMAGE_BYTES:
-            await ctx.reply(f"That image is too large to trace (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB).")
+            await ctx.reply(
+                f"That image is too large to trace (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB). "
+                f"Shrink it and try again."
+            )
             return None, None
         try:
             data = await attachment.read()
         except (discord.HTTPException, discord.NotFound):
-            await ctx.reply("Couldn't download that attachment — try again.")
+            await ctx.reply("I couldn't download that attachment. Try again, please.")
             return None, None
         return data, attachment.url
 
@@ -243,12 +246,14 @@ class TraceMoe(commands.Cog):
     @commands.hybrid_command(name="trace", description="Find the anime source of a screenshot.")
     async def trace(self, ctx, url: str | None = None):
         if url is not None and not url.lower().startswith(("http://", "https://")):
-            await ctx.reply("That doesn't look like a valid image URL.")
+            await ctx.reply("That doesn't look like a valid image URL. Give me a direct link.")
             return
 
         data, thumb_url = await self._resolve_image_source(ctx, url)
         if data is None and thumb_url is None:
-            await ctx.reply("Attach an image, reply to an image message, or pass an image URL.")
+            await ctx.reply(
+                "Give me something to work with: attach an image, reply to an image message, or pass an image URL."
+            )
             return
 
         # Deliberately not using reply_ephemeral_aware — like captions and aidetect, the
@@ -278,7 +283,9 @@ class TraceMoe(commands.Cog):
     async def _menu_trace(self, interaction: discord.Interaction, message: discord.Message):
         # Context menus bypass cog_check, so honor the per-guild toggle manually.
         if interaction.guild is not None and not cog_enabled(self.bot, interaction.guild.id, "trace"):
-            await interaction.response.send_message("Anime tracing is disabled in this server.", ephemeral=True)
+            await interaction.response.send_message(
+                "Anime tracing is disabled in this server. Take it up with the admins.", ephemeral=True
+            )
             return
 
         data = None
@@ -287,7 +294,8 @@ class TraceMoe(commands.Cog):
         if attachment is not None:
             if attachment.size > MAX_IMAGE_BYTES:
                 await interaction.response.send_message(
-                    f"That image is too large to trace (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB).",
+                    f"That image is too large to trace (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB). "
+                    f"Shrink it and try again.",
                     ephemeral=True,
                 )
                 return
@@ -296,14 +304,16 @@ class TraceMoe(commands.Cog):
                 thumb_url = attachment.url
             except (discord.HTTPException, discord.NotFound):
                 await interaction.response.send_message(
-                    "Couldn't download that attachment — try again.", ephemeral=True
+                    "I couldn't download that attachment. Try again, please.", ephemeral=True
                 )
                 return
         else:
             thumb_url = _first_embed_image_url(message.embeds)
 
         if data is None and thumb_url is None:
-            await interaction.response.send_message("That message doesn't have an image.", ephemeral=True)
+            await interaction.response.send_message(
+                "That message doesn't have an image. There's nothing for me to trace.", ephemeral=True
+            )
             return
 
         await interaction.response.defer(ephemeral=False)

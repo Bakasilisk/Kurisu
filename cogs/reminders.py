@@ -122,18 +122,22 @@ class Reminders(commands.Cog):
             return
 
         if delta > MAX_DURATION:
-            await self._reply(ctx, f"Reminders can't be set more than {MAX_DURATION.days} days out.")
+            await self._reply(
+                ctx, f"Reminders can't be set more than {MAX_DURATION.days} days out. Let's be realistic."
+            )
             return
         if len(text) > MAX_TEXT_LENGTH:
-            await self._reply(ctx, f"Reminder text can't exceed {MAX_TEXT_LENGTH} characters.")
+            await self._reply(
+                ctx, f"Reminder text can't exceed {MAX_TEXT_LENGTH} characters. Write a reminder, not a thesis."
+            )
             return
 
         user_reminders = [r for r in self.data["reminders"] if r["user_id"] == ctx.author.id]
         if len(user_reminders) >= MAX_REMINDERS_PER_USER:
             await self._reply(
                 ctx,
-                f"You already have {MAX_REMINDERS_PER_USER} pending reminders — "
-                f"cancel one with `forget` first.",
+                f"You already have {MAX_REMINDERS_PER_USER} pending reminders. "
+                f"Cancel one with `forget` first — even my memory has limits.",
             )
             return
 
@@ -177,7 +181,7 @@ class Reminders(commands.Cog):
                 self._save()
                 await self._reply(ctx, f"🗑️ Cancelled reminder #{reminder_id}.")
                 return
-        await self._reply(ctx, "You don't have a reminder with that ID.")
+        await self._reply(ctx, "You don't have a reminder with that ID. Check `reminders` for the right one.")
 
 
 async def setup(bot):

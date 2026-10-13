@@ -54,11 +54,11 @@ class Verification(commands.Cog):
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.RoleNotFound):
-            await ctx.reply("I couldn't find that role.")
+            await ctx.reply("I couldn't find that role. I looked — it isn't there.")
         elif isinstance(error, commands.MemberNotFound):
-            await ctx.reply("I couldn't find that member.")
+            await ctx.reply("I couldn't find that member. Check the name and try again.")
         elif isinstance(error, commands.ChannelNotFound):
-            await ctx.reply("I couldn't find that channel.")
+            await ctx.reply("I couldn't find that channel. Check your input.")
         elif await common_error_reply(ctx, error):
             return
         else:
@@ -155,7 +155,7 @@ class Verification(commands.Cog):
         self._save_config()
         await ctx.reply(
             "✅ Welcome messages disabled." if had_one
-            else "Welcome messages were not enabled."
+            else "Welcome messages weren't enabled to begin with."
         )
 
     @commands.command()
@@ -168,27 +168,31 @@ class Verification(commands.Cog):
         target_role_id = guild_conf["target_role_id"]
 
         if not granter_role_id or not target_role_id:
-            await ctx.reply("Verification isn't configured yet — ask a mod to run `.verification`.")
+            await ctx.reply(
+                "Verification isn't configured yet. Ask a mod to run `.verification` — I can't set it up myself."
+            )
             return
         if not any(role.id == granter_role_id for role in ctx.author.roles):
-            await ctx.reply("You don't have permission to do that.")
+            await ctx.reply("You don't have permission to do that. Hmph.")
             return
 
         target_role = ctx.guild.get_role(target_role_id)
         if target_role is None:
             await ctx.reply(
-                "The configured role no longer exists — ask a mod to set a new one with "
+                "The configured role doesn't exist anymore. Ask a mod to set a new one with "
                 "`.verification target`."
             )
             return
         if target_role in member.roles:
             await ctx.reply(
-                f"{member.mention} already has {target_role.mention}.",
+                f"{member.mention} already has {target_role.mention}. Pay attention.",
                 allowed_mentions=discord.AllowedMentions(roles=False),
             )
             return
         if not bot_outranks(ctx.guild, target_role):
-            await ctx.reply("I can't assign a role that's equal to or higher than my own top role.")
+            await ctx.reply(
+                "I can't assign a role that's equal to or higher than my own top role. Move my role up first."
+            )
             return
 
         await member.add_roles(target_role, reason=f"Granted by {ctx.author} via .verify")

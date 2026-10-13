@@ -72,7 +72,9 @@ class Help(commands.Cog):
         if match is None:
             embed = discord.Embed(
                 title="📖 Commands",
-                description=f"No cog named `{cog}`. Available: " + ", ".join(sorted(by_cog)),
+                description=(
+                    f"There's no cog named `{cog}`. Pick one that actually exists: " + ", ".join(sorted(by_cog))
+                ),
                 color=discord.Color.red(),
             )
             await self._reply(ctx, embed=embed)

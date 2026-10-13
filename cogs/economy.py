@@ -65,11 +65,11 @@ class Economy(commands.Cog):
 
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.MemberNotFound):
-            await ctx.reply("I couldn't find that member.")
+            await ctx.reply("I couldn't find that member. Are you sure they exist?")
         elif isinstance(error, commands.CheckAnyFailure):
             # A CheckFailure sibling, not a MissingPermissions subclass — common_error_reply
             # doesn't recognize it and would otherwise silently swallow it as a bare CheckFailure.
-            await ctx.reply("You don't have permission to do that.")
+            await ctx.reply("You don't have permission to do that. Nice try, though.")
         elif await common_error_reply(ctx, error):
             return
         else:
@@ -90,7 +90,7 @@ class Economy(commands.Cog):
         remaining = PAYDAY_COOLDOWN_SECONDS - (now - entry["last_payday"])
         if remaining > 0:
             await ctx.reply(
-                f"⏳ You've already collected your payday. Try again in {format_cooldown(remaining)}."
+                f"⏳ You've already collected your payday. Patience — try again in {format_cooldown(remaining)}."
             )
             return
 
@@ -165,7 +165,7 @@ class Economy(commands.Cog):
         if not await require_outranks(self.bot, ctx, member, "set bits for"):
             return
         if amount < 0:
-            await ctx.reply("Amount can't be negative.")
+            await ctx.reply("The amount can't be negative. Basic arithmetic, please.")
             return
         entry = self._account(ctx.guild.id, member.id)
         entry["balance"] = amount
@@ -177,18 +177,18 @@ class Economy(commands.Cog):
     async def give(self, ctx, member: discord.Member, amount: int):
         """Give some of your bits to another member."""
         if amount <= 0:
-            await ctx.reply("Amount must be positive.")
+            await ctx.reply("The amount must be positive. Giving away nothing isn't generosity.")
             return
         if member.id == ctx.author.id:
-            await ctx.reply("You can't give bits to yourself.")
+            await ctx.reply("You can't give bits to yourself. That's not how an economy works.")
             return
         if member.bot:
-            await ctx.reply("You can't give bits to a bot.")
+            await ctx.reply("You can't give bits to a bot. We have no use for them.")
             return
 
         sender = self._account(ctx.guild.id, ctx.author.id)
         if sender["balance"] < amount:
-            await ctx.reply(f"You don't have enough bits (you have {sender['balance']}).")
+            await ctx.reply(f"You can't afford that — you only have {sender['balance']} bits.")
             return
 
         receiver = self._account(ctx.guild.id, member.id)
@@ -202,15 +202,15 @@ class Economy(commands.Cog):
     async def coinflip(self, ctx, amount: int):
         """Bet bits on a coin flip."""
         if amount < COINFLIP_MIN_BET:
-            await ctx.reply(f"Minimum bet is {COINFLIP_MIN_BET} bits.")
+            await ctx.reply(f"The minimum bet is {COINFLIP_MIN_BET} bits. Don't be stingy.")
             return
         if amount > COINFLIP_MAX_BET:
-            await ctx.reply(f"Maximum bet is {COINFLIP_MAX_BET} bits.")
+            await ctx.reply(f"The maximum bet is {COINFLIP_MAX_BET} bits. Gamble responsibly.")
             return
 
         entry = self._account(ctx.guild.id, ctx.author.id)
         if entry["balance"] < amount:
-            await ctx.reply(f"You don't have enough bits (you have {entry['balance']}).")
+            await ctx.reply(f"Not enough bits. You have {entry['balance']} — do the math.")
             return
 
         if random.random() < 0.5:
@@ -227,15 +227,15 @@ class Economy(commands.Cog):
     async def slots(self, ctx, amount: int):
         """Bet bits on the slot machine (triples pay out, exact pairs push)."""
         if amount < SLOTS_MIN_BET:
-            await ctx.reply(f"Minimum bet is {SLOTS_MIN_BET} bits.")
+            await ctx.reply(f"The minimum bet is {SLOTS_MIN_BET} bits. Don't be stingy.")
             return
         if amount > SLOTS_MAX_BET:
-            await ctx.reply(f"Maximum bet is {SLOTS_MAX_BET} bits.")
+            await ctx.reply(f"The maximum bet is {SLOTS_MAX_BET} bits. Gamble responsibly.")
             return
 
         entry = self._account(ctx.guild.id, ctx.author.id)
         if entry["balance"] < amount:
-            await ctx.reply(f"You don't have enough bits (you have {entry['balance']}).")
+            await ctx.reply(f"Not enough bits. You have {entry['balance']} — do the math.")
             return
 
         reels = random.choices(SLOTS_SYMBOLS, weights=SLOTS_WEIGHTS, k=3)
